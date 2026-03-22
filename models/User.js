@@ -36,6 +36,18 @@ const userSchema = mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    // REVENANT: self-reported MRR band used to assign the correct Stripe price
+    mrrBand: {
+      type: String,
+      enum: ['under_30k', '30k_80k', 'over_80k'],
+      default: null,
+    },
+    // REVENANT: reference to the connected client Stripe account
+    stripeConnectionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'StripeConnection',
+      default: null,
+    },
   },
   {
     timestamps: true,

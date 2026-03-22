@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls \"/c/Users/lefev/Documents/Projet à 1 million/ship-fast-main/app/\\(dashboard\\)/\")",
+      "Bash(ls \"/c/Users/lefev/Documents/Projet à 1 million/ship-fast-main/app/\\(dashboard\\)/overview/\")",
+      "Bash(ls \"/c/Users/lefev/Documents/Projet à 1 million/ship-fast-main/app/\\(dashboard\\)/invoices/\")",
+      "Bash(ls \"/c/Users/lefev/Documents/Projet à 1 million/ship-fast-main/app/\\(dashboard\\)/customers/\")",
+      "Bash(ls \"/c/Users/lefev/Documents/Projet à 1 million/ship-fast-main/app/\\(dashboard\\)/prevention/\")"
+    ]
+  }
+}
