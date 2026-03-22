@@ -3,8 +3,6 @@ import { redirect } from 'next/navigation';
 import connectMongo from '@/libs/mongoose';
 import SubscriptionModel from '@/models/Subscription';
 
-interface PageProps {}
-
 function formatDate(dateStr?: string): string {
   if (!dateStr) return '—';
   return new Date(dateStr).toLocaleDateString('en-US', {
@@ -16,14 +14,6 @@ function formatDate(dateStr?: string): string {
 
 function formatCurrency(cents: number): string {
   return (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
-}
-
-function daysUntil(dateStr?: string): number {
-  if (!dateStr) return Infinity;
-  const date = new Date(dateStr);
-  const now = new Date();
-  const diff = date.getTime() - now.getTime();
-  return Math.ceil(diff / (1000 * 60 * 60 * 24));
 }
 
 function getCardExpiry(sub: any): Date | null {
@@ -60,17 +50,15 @@ function CardExpiryBadge({ days }: { days: number }) {
   );
 }
 
-export default async function PreventionPage({}: PageProps) {
+export default async function PreventionPage() {
   const session = await auth();
-  if (!session?.user?.email) {
+  if (!session?.user?.id) {
     redirect('/api/auth/signin');
   }
 
-  const orgId = session.user.email;
+  // session.user.id is the User._id (ObjectId as string) — matches orgId in all models
+  const orgId = session.user.id;
   const now = new Date();
-  const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-  const in14Days = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
-  const in7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
   let expiring30: any[] = [];
   let expiring14: any[] = [];
@@ -114,25 +102,21 @@ export default async function PreventionPage({}: PageProps) {
       label: 'Expiring in 30 days',
       value: expiring30.length,
       color: '#D97706',
-      bg: '#FEF9C3',
     },
     {
       label: 'Expiring in 14 days',
       value: expiring14.length,
       color: '#C2410C',
-      bg: '#FED7AA',
     },
     {
       label: 'Expiring in 7 days',
       value: expiring7.length,
       color: '#DC2626',
-      bg: '#FEE2E2',
     },
     {
       label: 'Shield targets',
       value: shieldTargets.length,
       color: '#6C63FF',
-      bg: '#EDE9FE',
     },
   ];
 
@@ -157,10 +141,7 @@ export default async function PreventionPage({}: PageProps) {
             style={{ boxShadow: '0 1px 3px #00000010', border: '1px solid #F0EDE8' }}
           >
             <span className="text-[12px] font-medium text-[#4B5563]">{stat.label}</span>
-            <span
-              className="text-[28px] font-bold"
-              style={{ color: stat.color }}
-            >
+            <span className="text-[28px] font-bold" style={{ color: stat.color }}>
               {stat.value}
             </span>
           </div>
@@ -203,17 +184,16 @@ export default async function PreventionPage({}: PageProps) {
             const brand = sub.cardBrand
               ? sub.cardBrand.charAt(0).toUpperCase() + sub.cardBrand.slice(1)
               : '';
-            const expiryLabel = sub.cardExpMonth && sub.cardExpYear
-              ? `${String(sub.cardExpMonth).padStart(2, '0')}/${String(sub.cardExpYear).slice(-2)}`
-              : '—';
+            const expiryLabel =
+              sub.cardExpMonth && sub.cardExpYear
+                ? `${String(sub.cardExpMonth).padStart(2, '0')}/${String(sub.cardExpYear).slice(-2)}`
+                : '—';
 
             return (
               <div
                 key={sub._id?.toString()}
                 className="grid items-center px-4 h-14 border-b border-[#E5E7EB] last:border-b-0 hover:bg-[#FAFAFA] transition-colors"
-                style={{
-                  gridTemplateColumns: '1fr 8rem 6rem 6rem 8rem',
-                }}
+                style={{ gridTemplateColumns: '1fr 8rem 6rem 6rem 8rem' }}
               >
                 <div className="flex flex-col min-w-0 pr-2">
                   <span className="text-[13px] font-medium text-[#1A1A1A] truncate">{displayName}</span>
@@ -230,9 +210,7 @@ export default async function PreventionPage({}: PageProps) {
                 <span className="text-[13px] font-semibold text-[#1A1A1A]">
                   {formatCurrency(sub.mrr ?? 0)}
                 </span>
-                <button
-                  className="text-[12px] font-medium px-3 py-1.5 rounded-lg border border-[#E5E7EB] text-[#4B5563] hover:bg-[#F7F5F2] transition-colors"
-                >
+                <button className="text-[12px] font-medium px-3 py-1.5 rounded-lg border border-[#E5E7EB] text-[#4B5563] hover:bg-[#F7F5F2] transition-colors">
                   Send email
                 </button>
               </div>
@@ -282,9 +260,7 @@ export default async function PreventionPage({}: PageProps) {
               <div
                 key={sub._id?.toString()}
                 className="grid items-center px-4 h-14 border-b border-[#E5E7EB] last:border-b-0 hover:bg-[#FAFAFA] transition-colors"
-                style={{
-                  gridTemplateColumns: '1fr 6rem 6rem 7rem',
-                }}
+                style={{ gridTemplateColumns: '1fr 6rem 6rem 7rem' }}
               >
                 <div className="flex flex-col min-w-0 pr-2">
                   <span className="text-[13px] font-medium text-[#1A1A1A] truncate">{displayName}</span>
@@ -295,9 +271,7 @@ export default async function PreventionPage({}: PageProps) {
                 <span className="text-[13px] font-semibold text-[#1A1A1A]">
                   {formatCurrency(sub.mrr ?? 0)}
                 </span>
-                <span
-                  className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-medium bg-[#FEE2E2] text-[#991B1B]"
-                >
+                <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-medium bg-[#FEE2E2] text-[#991B1B]">
                   {score} /100
                 </span>
                 <span className="text-[12px] text-[#4B5563]">

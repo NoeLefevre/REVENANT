@@ -64,11 +64,12 @@ function docToInvoice(doc: any): Invoice {
 
 export default async function OverviewPage() {
   const session = await auth();
-  if (!session?.user?.email) {
+  if (!session?.user?.id) {
     redirect('/api/auth/signin');
   }
 
-  const orgId = session.user.email;
+  // session.user.id is the User._id (ObjectId as string) — matches orgId in all models
+  const orgId = session.user.id;
 
   let stripeConnection: any = null;
   let openInvoices: Invoice[] = [];
@@ -83,8 +84,8 @@ export default async function OverviewPage() {
   try {
     await connectMongo();
 
-    // Stripe connection
-    stripeConnection = await (StripeConnectionModel as any).findOne({ orgId }).lean();
+    // StripeConnection uses userId (not orgId)
+    stripeConnection = await (StripeConnectionModel as any).findOne({ userId: orgId }).lean();
 
     if (stripeConnection) {
       // Open invoices
@@ -130,7 +131,7 @@ export default async function OverviewPage() {
       sequencesCompletingThisWeek = await (DunningSequenceModel as any).countDocuments({
         orgId,
         status: 'active',
-        'steps': { $elemMatch: { scheduledAt: { $lte: getEndOfThisWeek() }, sentAt: { $exists: false } } },
+        steps: { $elemMatch: { scheduledAt: { $lte: getEndOfThisWeek() }, sentAt: { $exists: false } } },
       });
     }
   } catch (err) {

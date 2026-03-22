@@ -50,12 +50,16 @@ function InvoiceCard({ invoice, borderColor }: InvoiceCardProps) {
   const displayEmail = invoice.customerName ? invoice.customerEmail : undefined;
 
   return (
-    <div
-      className="bg-white rounded-lg p-4 flex flex-col gap-2"
+    <a
+      href={`https://dashboard.stripe.com/invoices/${invoice.stripeInvoiceId}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="block bg-white rounded-lg p-4 flex flex-col gap-2 hover:shadow-md transition-shadow"
       style={{
         boxShadow: '0 1px 3px #00000010',
         border: '1px solid #F0EDE8',
         borderLeft: `4px solid ${borderColor}`,
+        textDecoration: 'none',
       }}
     >
       <div className="flex items-start justify-between gap-2">
@@ -75,7 +79,7 @@ function InvoiceCard({ invoice, borderColor }: InvoiceCardProps) {
           <RecoveryScore score={invoice.recoveryScore} />
         )}
       </div>
-    </div>
+    </a>
   );
 }
 
@@ -88,19 +92,29 @@ function BoardColumn({ config, invoices }: BoardColumnProps) {
   return (
     <div className="flex flex-col gap-3 flex-1 min-w-0">
       {/* Column header */}
-      <div className="flex items-center gap-2">
-        <span
-          className="text-[10px] font-medium uppercase tracking-[0.8px]"
-          style={{ color: config.borderColor }}
-        >
-          {config.title}
-        </span>
-        <span
-          className="inline-flex items-center justify-center rounded-full w-5 h-5 text-[10px] font-bold"
-          style={{ backgroundColor: config.badgeBg, color: config.badgeText }}
-        >
-          {invoices.length}
-        </span>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span
+            className="text-[10px] font-medium uppercase tracking-[0.8px]"
+            style={{ color: config.borderColor }}
+          >
+            {config.title}
+          </span>
+          <span
+            className="inline-flex items-center justify-center rounded-full w-5 h-5 text-[10px] font-bold"
+            style={{ backgroundColor: config.badgeBg, color: config.badgeText }}
+          >
+            {invoices.length}
+          </span>
+        </div>
+        {invoices.length > 0 && (
+          <a
+            href="/invoices"
+            className="text-[11px] text-[#9CA3AF] hover:text-[#4B5563] transition-colors"
+          >
+            View all →
+          </a>
+        )}
       </div>
 
       {/* Cards */}

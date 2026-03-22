@@ -85,7 +85,7 @@ function StatusBadge({ status }: { status: InvoiceStatus | string }) {
 
 export default async function InvoicesPage({ searchParams }: PageProps) {
   const session = await auth();
-  if (!session?.user?.email) {
+  if (!session?.user?.id) {
     redirect('/api/auth/signin');
   }
 
@@ -93,7 +93,9 @@ export default async function InvoicesPage({ searchParams }: PageProps) {
   const page = Math.max(1, parseInt(params.page ?? '1', 10));
   const category = params.category ?? '';
   const statusFilter = params.status ?? 'open';
-  const orgId = session.user.email;
+
+  // session.user.id is the User._id (ObjectId as string) — matches orgId in all models
+  const orgId = session.user.id;
 
   let invoices: Invoice[] = [];
   let total = 0;
@@ -255,10 +257,16 @@ export default async function InvoicesPage({ searchParams }: PageProps) {
                   <StatusBadge status={invoice.status} />
                 </div>
 
-                {/* Actions */}
-                <button className="flex items-center justify-center w-8 h-8 rounded text-[#9CA3AF] hover:bg-[#F3F4F6] transition-colors">
-                  ⋯
-                </button>
+                {/* Actions — link to Stripe invoice */}
+                <a
+                  href={`https://dashboard.stripe.com/invoices/${invoice.stripeInvoiceId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="View in Stripe"
+                  className="flex items-center justify-center w-8 h-8 rounded text-[#9CA3AF] hover:bg-[#F3F4F6] hover:text-[#4B5563] transition-colors"
+                >
+                  ↗
+                </a>
               </div>
             );
           })

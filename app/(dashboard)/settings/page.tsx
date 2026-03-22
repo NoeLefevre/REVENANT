@@ -9,43 +9,29 @@ interface PageProps {
   }>;
 }
 
-function CopyButton({ value }: { value: string }) {
-  // Static render - client copy handled via form
-  return (
-    <button
-      className="text-[12px] font-medium px-3 py-1.5 rounded-lg border border-[#E5E7EB] text-[#4B5563] hover:bg-[#F7F5F2] transition-colors"
-      onClick={undefined}
-    >
-      Copy
-    </button>
-  );
-}
-
 export default async function SettingsPage({ searchParams }: PageProps) {
   const session = await auth();
-  if (!session?.user?.email) {
+  if (!session?.user?.id) {
     redirect('/api/auth/signin');
   }
 
   const params = await searchParams;
   const section = params.section ?? 'stripe';
-  const orgId = session.user.email;
+
+  // session.user.id is the User._id (ObjectId as string) — matches userId in StripeConnection
+  const userId = session.user.id;
 
   let stripeConnection: any = null;
   let error: string | null = null;
 
   try {
     await connectMongo();
-    stripeConnection = await (StripeConnectionModel as any).findOne({ orgId }).lean();
+    // StripeConnection uses userId (not orgId)
+    stripeConnection = await (StripeConnectionModel as any).findOne({ userId }).lean();
   } catch (err) {
     console.error('[SettingsPage] Error:', err);
     error = 'Failed to load settings. Please try again.';
   }
-
-  const webhookUrl =
-    typeof window !== 'undefined'
-      ? `${window.location.origin}/api/webhooks/stripe`
-      : `https://yourdomain.com/api/webhooks/stripe`;
 
   const navItems = [
     { key: 'stripe', label: 'Stripe' },
@@ -159,8 +145,9 @@ export default async function SettingsPage({ searchParams }: PageProps) {
                   <p className="text-sm text-[#4B5563]">
                     Connect your Stripe account to sync invoices, subscriptions, and start automated recovery.
                   </p>
+                  {/* Correct URL: /api/stripe-connect/authorize */}
                   <a
-                    href="/api/stripe/connect"
+                    href="/api/stripe-connect/authorize"
                     className="inline-flex items-center justify-center px-4 py-2.5 rounded-lg text-white text-sm font-medium self-start"
                     style={{ backgroundColor: '#6C63FF' }}
                   >
@@ -178,21 +165,15 @@ export default async function SettingsPage({ searchParams }: PageProps) {
               <div>
                 <h2 className="text-[15px] font-semibold text-[#1A1A1A]">Stripe Webhook</h2>
                 <p className="text-[12px] text-[#4B5563] mt-0.5">
-                  Add this webhook URL in your Stripe dashboard to receive real-time events.
+                  Add this webhook URL in your Stripe Connect dashboard to receive real-time events.
                 </p>
               </div>
 
               <div className="flex items-center gap-3">
-                <div
-                  className="flex-1 h-10 px-3 flex items-center rounded-lg border border-[#E5E7EB] font-mono text-[12px] text-[#4B5563] overflow-hidden"
-                >
-                  <span className="truncate">/api/webhooks/stripe</span>
+                <div className="flex-1 h-10 px-3 flex items-center rounded-lg border border-[#E5E7EB] font-mono text-[12px] text-[#4B5563] overflow-hidden">
+                  {/* Correct webhook path */}
+                  <span className="truncate">/api/webhook/stripe-connect</span>
                 </div>
-                <button
-                  className="flex-shrink-0 px-3 py-2 rounded-lg border border-[#E5E7EB] text-[12px] font-medium text-[#4B5563] hover:bg-[#F7F5F2] transition-colors"
-                >
-                  Copy
-                </button>
               </div>
 
               <div className="flex flex-col gap-1">
@@ -202,7 +183,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
                 <div className="flex flex-wrap gap-1.5">
                   {[
                     'invoice.payment_failed',
-                    'invoice.paid',
+                    'invoice.payment_succeeded',
                     'customer.subscription.updated',
                     'payment_method.updated',
                   ].map((evt) => (
@@ -221,10 +202,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
             {/* Danger card */}
             <div
               className="bg-white rounded-lg p-6 flex flex-col gap-4"
-              style={{
-                boxShadow: '0 1px 3px #00000010',
-                border: '1px solid #FECACA',
-              }}
+              style={{ boxShadow: '0 1px 3px #00000010', border: '1px solid #FECACA' }}
             >
               <div>
                 <h2 className="text-[15px] font-semibold text-[#DC2626]">Danger Zone</h2>
@@ -243,7 +221,8 @@ export default async function SettingsPage({ searchParams }: PageProps) {
                     This will stop all recovery sequences and remove your Stripe connection.
                   </p>
                 </div>
-                <form method="POST" action="/api/stripe/disconnect">
+                {/* Correct URL: /api/stripe-connect/disconnect */}
+                <form method="POST" action="/api/stripe-connect/disconnect">
                   <button
                     type="submit"
                     className="flex-shrink-0 px-4 py-2 rounded-lg text-white text-[13px] font-medium hover:opacity-90 transition-opacity"
@@ -260,31 +239,113 @@ export default async function SettingsPage({ searchParams }: PageProps) {
 
         {section === 'emails' && (
           <div
-            className="bg-white rounded-lg p-6 flex flex-col gap-4"
+            className="bg-white rounded-lg p-6 flex flex-col gap-5"
             style={{ boxShadow: '0 1px 3px #00000010', border: '1px solid #F0EDE8' }}
           >
-            <h2 className="text-[15px] font-semibold text-[#1A1A1A]">Email Settings</h2>
-            <p className="text-sm text-[#4B5563]">Email configuration coming soon.</p>
+            <div>
+              <h2 className="text-[15px] font-semibold text-[#1A1A1A]">Email Settings</h2>
+              <p className="text-[12px] text-[#4B5563] mt-0.5">
+                Configure the emails REVENANT sends to your customers.
+              </p>
+            </div>
+            <div className="flex flex-col gap-3">
+              {[
+                { icon: '📬', label: 'Card expiry alerts', sub: 'Notify customers 30, 14, and 7 days before their card expires' },
+                { icon: '🔁', label: 'Dunning sequences', sub: 'Automated recovery emails for failed payments' },
+                { icon: '🛡️', label: 'Chargeback Shield', sub: 'Pre-debit notice for high-risk customers' },
+              ].map((item) => (
+                <div
+                  key={item.label}
+                  className="flex items-start gap-3 p-4 rounded-lg"
+                  style={{ backgroundColor: '#F7F5F2' }}
+                >
+                  <span className="text-xl leading-none mt-0.5">{item.icon}</span>
+                  <div>
+                    <p className="text-[13px] font-medium text-[#1A1A1A]">{item.label}</p>
+                    <p className="text-[12px] text-[#9CA3AF]">{item.sub}</p>
+                  </div>
+                  <span
+                    className="ml-auto flex-shrink-0 text-[11px] font-medium px-2 py-0.5 rounded"
+                    style={{ backgroundColor: '#DCFCE7', color: '#15803D' }}
+                  >
+                    Active
+                  </span>
+                </div>
+              ))}
+            </div>
+            <p className="text-[12px] text-[#9CA3AF]">
+              Custom templates and per-customer frequency controls coming soon.
+            </p>
           </div>
         )}
 
         {section === 'slack' && (
           <div
-            className="bg-white rounded-lg p-6 flex flex-col gap-4"
+            className="bg-white rounded-lg p-6 flex flex-col gap-5"
             style={{ boxShadow: '0 1px 3px #00000010', border: '1px solid #F0EDE8' }}
           >
-            <h2 className="text-[15px] font-semibold text-[#1A1A1A]">Slack Integration</h2>
-            <p className="text-sm text-[#4B5563]">Slack integration coming soon.</p>
+            <div>
+              <h2 className="text-[15px] font-semibold text-[#1A1A1A]">Slack Integration</h2>
+              <p className="text-[12px] text-[#4B5563] mt-0.5">
+                Get real-time recovery alerts in your Slack workspace.
+              </p>
+            </div>
+            <div className="flex flex-col gap-3">
+              {[
+                { label: 'Recovery alerts', sub: 'Notify when a failed invoice is recovered' },
+                { label: 'At-risk digest', sub: 'Daily summary of invoices entering dunning sequences' },
+                { label: 'Card expiry warnings', sub: 'Alert when high-value customers have expiring cards' },
+              ].map((item) => (
+                <div
+                  key={item.label}
+                  className="flex items-center justify-between p-4 rounded-lg"
+                  style={{ backgroundColor: '#F7F5F2' }}
+                >
+                  <div>
+                    <p className="text-[13px] font-medium text-[#1A1A1A]">{item.label}</p>
+                    <p className="text-[12px] text-[#9CA3AF]">{item.sub}</p>
+                  </div>
+                  <span
+                    className="text-[11px] font-medium px-2 py-0.5 rounded"
+                    style={{ backgroundColor: '#F3F4F6', color: '#6B7280' }}
+                  >
+                    Coming soon
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
         {section === 'billing' && (
           <div
-            className="bg-white rounded-lg p-6 flex flex-col gap-4"
+            className="bg-white rounded-lg p-6 flex flex-col gap-5"
             style={{ boxShadow: '0 1px 3px #00000010', border: '1px solid #F0EDE8' }}
           >
-            <h2 className="text-[15px] font-semibold text-[#1A1A1A]">Billing</h2>
-            <p className="text-sm text-[#4B5563]">Billing management coming soon.</p>
+            <div>
+              <h2 className="text-[15px] font-semibold text-[#1A1A1A]">Billing</h2>
+              <p className="text-[12px] text-[#4B5563] mt-0.5">
+                Manage your REVENANT subscription and invoices.
+              </p>
+            </div>
+            <div
+              className="flex items-center justify-between p-4 rounded-lg"
+              style={{ backgroundColor: '#F7F5F2' }}
+            >
+              <div>
+                <p className="text-[13px] font-medium text-[#1A1A1A]">Subscription & invoices</p>
+                <p className="text-[12px] text-[#9CA3AF]">
+                  View your plan, update payment method, and download invoices
+                </p>
+              </div>
+              <a
+                href="/api/stripe/create-portal"
+                className="flex-shrink-0 px-4 py-2 rounded-lg text-white text-[13px] font-medium hover:opacity-90 transition-opacity"
+                style={{ backgroundColor: '#6C63FF' }}
+              >
+                Manage billing →
+              </a>
+            </div>
           </div>
         )}
       </div>

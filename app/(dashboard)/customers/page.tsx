@@ -104,14 +104,16 @@ function CardExpiry({ sub }: { sub: Subscription }) {
 
 export default async function CustomersPage({ searchParams }: PageProps) {
   const session = await auth();
-  if (!session?.user?.email) {
+  if (!session?.user?.id) {
     redirect('/api/auth/signin');
   }
 
   const params = await searchParams;
   const page = Math.max(1, parseInt(params.page ?? '1', 10));
   const search = params.search ?? '';
-  const orgId = session.user.email;
+
+  // session.user.id is the User._id (ObjectId as string) — matches orgId in all models
+  const orgId = session.user.id;
 
   let subscriptions: Subscription[] = [];
   let total = 0;

@@ -71,14 +71,16 @@ function getNextScheduledStep(seq: DunningSequence): string {
 
 export default async function SequencesPage({ searchParams }: PageProps) {
   const session = await auth();
-  if (!session?.user?.email) {
+  if (!session?.user?.id) {
     redirect('/api/auth/signin');
   }
 
   const params = await searchParams;
   const tab = params.tab ?? 'active';
   const page = Math.max(1, parseInt(params.page ?? '1', 10));
-  const orgId = session.user.email;
+
+  // session.user.id is the User._id (ObjectId as string) — matches orgId in all models
+  const orgId = session.user.id;
 
   let sequences: DunningSequence[] = [];
   let total = 0;
@@ -87,7 +89,6 @@ export default async function SequencesPage({ searchParams }: PageProps) {
   let recoveryRate = 0;
   let error: string | null = null;
 
-  // Map sequenceId → invoice customer info
   const invoiceMap: Record<string, any> = {};
 
   try {
@@ -242,9 +243,7 @@ export default async function SequencesPage({ searchParams }: PageProps) {
               <div
                 key={seq._id}
                 className="grid items-center px-4 h-14 border-b border-[#E5E7EB] last:border-b-0 hover:bg-[#FAFAFA] transition-colors"
-                style={{
-                  gridTemplateColumns: '1fr 8rem 5rem 7rem 7rem 7rem 2.5rem',
-                }}
+                style={{ gridTemplateColumns: '1fr 8rem 5rem 7rem 7rem 7rem 2.5rem' }}
               >
                 {/* Customer */}
                 <div className="flex flex-col min-w-0 pr-2">

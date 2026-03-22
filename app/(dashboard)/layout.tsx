@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { auth } from '@/libs/auth';
 import connectMongo from '@/libs/mongoose';
 import Sidebar from '@/components/revenant/Sidebar';
+import FreemiumGate from '@/components/revenant/FreemiumGate';
 import UserModel from '@/models/User';
 
 export default async function DashboardLayout({
@@ -44,10 +45,12 @@ export default async function DashboardLayout({
     <div className="flex h-screen overflow-hidden">
       <Sidebar user={sidebarUser} hasAccess={hasAccess} />
       <main
-        className="flex-1 overflow-auto"
+        className="flex-1 overflow-auto relative"
         style={{ backgroundColor: '#FAF8F5' }}
       >
-        {children}
+        <FreemiumGate hasAccess={hasAccess}>
+          {children}
+        </FreemiumGate>
       </main>
     </div>
   );

@@ -1,15 +1,80 @@
 import Link from 'next/link';
+import { auth } from '@/libs/auth';
+import connectMongo from '@/libs/mongoose';
+import Invoice from '@/models/Invoice';
+import Subscription from '@/models/Subscription';
+import StripeConnection from '@/models/StripeConnection';
 
-// Mock data for audit page — real Stripe scan will be implemented later
-const MOCK_DATA = {
-  atRisk: 4320_00, // cents
+const DEMO_DATA = {
+  atRisk: 4_320_00,
   failedPayments: 3,
   cardsExpiring: 5,
   chargebackRisk: 2,
 };
 
+async function loadAuditData(orgId: string) {
+  try {
+    await connectMongo();
+
+    const connection = await (StripeConnection as any)
+      .findOne({ userId: orgId, syncStatus: 'done' })
+      .select('_id')
+      .lean();
+
+    if (!connection) return null;
+
+    const now = new Date();
+    const in7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    const openInvoices = await (Invoice as any)
+      .find({ orgId, status: 'open' })
+      .select('amount')
+      .lean();
+
+    const failedPayments = openInvoices.length;
+    const atRisk = openInvoices.reduce((sum: number, inv: any) => sum + (inv.amount ?? 0), 0);
+
+    const activeSubs = await (Subscription as any)
+      .find({
+        orgId,
+        status: { $in: ['active', 'trialing'] },
+        cardExpMonth: { $exists: true, $ne: null },
+        cardExpYear: { $exists: true, $ne: null },
+      })
+      .select('cardExpMonth cardExpYear recoveryScore currentPeriodEnd')
+      .lean();
+
+    let cardsExpiring = 0;
+    let chargebackRisk = 0;
+
+    for (const sub of activeSubs) {
+      const cardExpiry = new Date(sub.cardExpYear, sub.cardExpMonth, 0, 23, 59, 59);
+      const daysLeft = Math.floor((cardExpiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      if (daysLeft >= 0 && daysLeft <= 30) cardsExpiring++;
+
+      if (
+        sub.recoveryScore !== null &&
+        sub.recoveryScore < 40 &&
+        sub.currentPeriodEnd &&
+        sub.currentPeriodEnd > now &&
+        sub.currentPeriodEnd <= in7Days
+      ) {
+        chargebackRisk++;
+      }
+    }
+
+    return { atRisk, failedPayments, cardsExpiring, chargebackRisk };
+  } catch {
+    return null;
+  }
+}
+
 function formatCurrency(cents: number): string {
-  return (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 });
+  return (cents / 100).toLocaleString('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 0,
+  });
 }
 
 export const metadata = {
@@ -57,13 +122,17 @@ function MiniCard({ icon, label, value, sub, accentColor, accentBg }: MiniCardPr
   );
 }
 
-export default function AuditPage() {
+export default async function AuditPage() {
+  const session = await auth();
+  const realData = session?.user?.id ? await loadAuditData(session.user.id) : null;
+  const data = realData ?? DEMO_DATA;
+  const isLive = realData !== null;
+
   return (
     <div
       className="min-h-screen flex flex-col items-center justify-center px-4 py-12"
       style={{ backgroundColor: '#FAF8F5' }}
     >
-      {/* Card */}
       <div
         className="bg-white w-full flex flex-col gap-6 rounded-xl p-8"
         style={{
@@ -83,13 +152,20 @@ export default function AuditPage() {
 
         {/* Title */}
         <div className="flex flex-col gap-2 text-center">
-          <p className="text-sm text-[#4B5563]">Currently at risk in your Stripe</p>
+          <p className="text-sm text-[#4B5563]">
+            {isLive ? 'Currently at risk in your Stripe' : 'Example: revenue at risk'}
+          </p>
           <p className="text-[56px] font-bold leading-none" style={{ color: '#DC2626' }}>
-            {formatCurrency(MOCK_DATA.atRisk)}
+            {formatCurrency(data.atRisk)}
           </p>
           <p className="text-sm text-[#4B5563] max-w-xs mx-auto">
-            This is revenue that could be automatically recovered with intelligent dunning and card update campaigns.
+            {isLive
+              ? 'This is your live revenue at risk. REVENANT is already monitoring your account.'
+              : 'This is revenue that could be automatically recovered with intelligent dunning and card update campaigns.'}
           </p>
+          {!isLive && (
+            <span className="text-[11px] text-[#9CA3AF]">Demo data — connect Stripe to see your real numbers</span>
+          )}
         </div>
 
         {/* Mini cards */}
@@ -103,7 +179,7 @@ export default function AuditPage() {
               </svg>
             }
             label="Failed payments"
-            value={MOCK_DATA.failedPayments}
+            value={data.failedPayments}
             sub="invoices requiring recovery"
             accentColor="#DC2626"
             accentBg="#FEF2F2"
@@ -116,7 +192,7 @@ export default function AuditPage() {
               </svg>
             }
             label="Cards expiring soon"
-            value={MOCK_DATA.cardsExpiring}
+            value={data.cardsExpiring}
             sub="subscriptions at risk of failing"
             accentColor="#D97706"
             accentBg="#FEF9C3"
@@ -128,7 +204,7 @@ export default function AuditPage() {
               </svg>
             }
             label="Chargeback risk"
-            value={MOCK_DATA.chargebackRisk}
+            value={data.chargebackRisk}
             sub="high-risk customers billing soon"
             accentColor="#6C63FF"
             accentBg="#EDE9FE"
@@ -137,13 +213,23 @@ export default function AuditPage() {
 
         {/* CTA */}
         <div className="flex flex-col gap-3">
-          <a
-            href="/api/auth/signin?callbackUrl=/overview"
-            className="w-full py-3 rounded-lg text-white text-[15px] font-semibold text-center transition-opacity hover:opacity-90"
-            style={{ backgroundColor: '#6C63FF' }}
-          >
-            Activate REVENANT →
-          </a>
+          {isLive ? (
+            <Link
+              href="/overview"
+              className="w-full py-3 rounded-lg text-white text-[15px] font-semibold text-center transition-opacity hover:opacity-90"
+              style={{ backgroundColor: '#6C63FF' }}
+            >
+              Go to dashboard →
+            </Link>
+          ) : (
+            <a
+              href="/api/auth/signin?callbackUrl=/onboarding"
+              className="w-full py-3 rounded-lg text-white text-[15px] font-semibold text-center transition-opacity hover:opacity-90"
+              style={{ backgroundColor: '#6C63FF' }}
+            >
+              Activate REVENANT →
+            </a>
+          )}
           <Link
             href="/overview"
             className="text-sm text-[#4B5563] text-center hover:text-[#1A1A1A] transition-colors"

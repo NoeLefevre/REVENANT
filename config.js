@@ -1,92 +1,92 @@
 const config = {
   // REQUIRED
-  appName: "ShipFast",
+  appName: "REVENANT",
   // REQUIRED: a short description of your app for SEO tags (can be overwritten)
   appDescription:
-    "The NextJS boilerplate with all you need to build your SaaS, AI tool, or any other web app.",
-  // REQUIRED (no https://, not trialing slash at the end, just the naked domain)
-  domainName: "shipfa.st",
+    "Protect your SaaS MRR from failed payments. REVENANT automatically recovers failed invoices, prevents card expiry surprises, and shields you from chargebacks.",
+  // REQUIRED (no https://, not trailing slash at the end, just the naked domain)
+  domainName: "revenant.so",
   crisp: {
     // Crisp website ID. IF YOU DON'T USE CRISP: just remove this => Then add a support email in this config file (resend.supportEmail) otherwise customer support won't work.
     id: "",
-    // Hide Crisp by default, except on route "/". Crisp is toggled with <ButtonSupport/>. If you want to show Crisp on every routes, just remove this below
     onlyShowOnRoutes: ["/"],
   },
   stripe: {
-    // Create multiple plans in your Stripe dashboard, then add them here. You can add as many plans as you want, just make sure to add the priceId
+    // REVENANT pricing — 3 MRR-based tiers
+    // Set the actual Stripe priceIds in your .env.local:
+    //   STRIPE_PRICE_UNDER_30K, STRIPE_PRICE_30K_80K, STRIPE_PRICE_OVER_80K
     plans: [
       {
-        // REQUIRED — we use this to find the plan in the webhook (for instance if you want to update the user's credits based on the plan)
         priceId:
           process.env.NODE_ENV === "development"
-            ? "price_1Niyy5AxyNprDp7iZIqEyD2h"
-            : "price_456",
-        //  REQUIRED - Name of the plan, displayed on the pricing page
+            ? "price_dev_under30k"
+            : process.env.STRIPE_PRICE_UNDER_30K ?? "price_under_30k",
         name: "Starter",
-        // A friendly description of the plan, displayed on the pricing page. Tip: explain why this plan and not others
-        description: "Perfect for small projects",
-        // The price you want to display, the one user will be charged on Stripe.
-        price: 79,
-        // If you have an anchor price (i.e. $29) that you want to display crossed out, put it here. Otherwise, leave it empty
+        description: "For growing SaaS under $30K MRR",
+        price: 49,
         priceAnchor: 99,
         features: [
-          {
-            name: "NextJS boilerplate",
-          },
-          { name: "User oauth" },
-          { name: "Database" },
-          { name: "Emails" },
+          { name: "Automated dunning sequences" },
+          { name: "DIE Decline classification" },
+          { name: "Card expiry alerts (J-30/14/7)" },
+          { name: "Recovery score per customer" },
+          { name: "Up to $30K MRR protected" },
         ],
       },
       {
-        // This plan will look different on the pricing page, it will be highlighted. You can only have one plan with isFeatured: true
         isFeatured: true,
         priceId:
           process.env.NODE_ENV === "development"
-            ? "price_1O5KtcAxyNprDp7iftKnrrpw"
-            : "price_456",
-        name: "Advanced",
-        description: "You need more power",
+            ? "price_dev_30k_80k"
+            : process.env.STRIPE_PRICE_30K_80K ?? "price_30k_80k",
+        name: "Growth",
+        description: "For scaling SaaS between $30K–$80K MRR",
         price: 99,
-        priceAnchor: 149,
+        priceAnchor: 199,
         features: [
-          {
-            name: "NextJS boilerplate",
-          },
-          { name: "User oauth" },
-          { name: "Database" },
-          { name: "Emails" },
-          { name: "1 year of updates" },
-          { name: "24/7 support" },
+          { name: "Everything in Starter" },
+          { name: "Chargeback Shield pre-debit emails" },
+          { name: "Payday-aware retry scheduling" },
+          { name: "Revenue Safety Score™ card" },
+          { name: "Up to $80K MRR protected" },
+        ],
+      },
+      {
+        priceId:
+          process.env.NODE_ENV === "development"
+            ? "price_dev_over80k"
+            : process.env.STRIPE_PRICE_OVER_80K ?? "price_over_80k",
+        name: "Scale",
+        description: "For established SaaS over $80K MRR",
+        price: 249,
+        priceAnchor: 499,
+        features: [
+          { name: "Everything in Growth" },
+          { name: "Priority support" },
+          { name: "Custom dunning sequence timing" },
+          { name: "Slack recovery alerts" },
+          { name: "Unlimited MRR protected" },
         ],
       },
     ],
   },
   aws: {
-    // If you use AWS S3/Cloudfront, put values in here
     bucket: "bucket-name",
     bucketUrl: `https://bucket-name.s3.amazonaws.com/`,
     cdn: "https://cdn-id.cloudfront.net/",
   },
   resend: {
-    // REQUIRED — Email 'From' field to be used when sending magic login links
-    fromNoReply: `ShipFast <noreply@resend.shipfa.st>`,
-    // REQUIRED — Email 'From' field to be used when sending other emails, like abandoned carts, updates etc..
-    fromAdmin: `Marc at ShipFast <marc@resend.shipfa.st>`,
-    // Email shown to customer if need support. Leave empty if not needed => if empty, set up Crisp above, otherwise you won't be able to offer customer support."
-    supportEmail: "marc.louvion@gmail.com",
+    fromNoReply: `REVENANT <noreply@revenant.so>`,
+    fromAdmin: `REVENANT <hello@revenant.so>`,
+    supportEmail: "hello@revenant.so",
   },
   colors: {
-    // REQUIRED — The DaisyUI theme to use (added to the main layout.js). Leave blank for default (light & dark mode). If you any other theme than light/dark, you need to add it in config.tailwind.js in daisyui.themes.
     theme: "light",
-    // REQUIRED — This color will be reflected on the whole app outside of the document (loading bar, Chrome tabs, etc..). By default it takes the primary color from your DaisyUI theme (make sure to update your the theme name after "data-theme=")
-    // OR you can just do this to use a custom color: main: "#f37055". HEX only.
-    main: "hsl(var(--p))", // Uses the primary color from the DaisyUI theme dynamically
+    main: "#6C63FF",
   },
   auth: {
-    // REQUIRED — the path to log in users. It's use to protect private routes (like /dashboard). It's used in apiClient (/libs/api.js) upon 401 errors from our API
     loginUrl: "/api/auth/signin",
-    callbackUrl: "/dashboard",
+    callbackUrl: "/overview",
   },
 };
 

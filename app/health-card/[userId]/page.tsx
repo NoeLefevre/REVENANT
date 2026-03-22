@@ -1,6 +1,7 @@
 import { Metadata } from 'next';
 import Link from 'next/link';
 import connectMongo from '@/libs/mongoose';
+import { computeHealthScore } from '@/libs/healthScore';
 import HealthCard from '@/components/revenant/HealthCard';
 import { HealthScore } from '@/types/revenant';
 
@@ -8,8 +9,7 @@ interface PageProps {
   params: Promise<{ userId: string }>;
 }
 
-// Mock health score used when no real data is found
-const MOCK_HEALTH_SCORE: HealthScore = {
+const DEMO_SCORE: HealthScore = {
   total: 72,
   dimensions: {
     expiryRisk: 65,
@@ -19,118 +19,70 @@ const MOCK_HEALTH_SCORE: HealthScore = {
     dunningConfig: true,
   },
 };
+const DEMO_PILLS = ['47 customers', '$12,400 MRR'];
 
-const MOCK_PILLS = ['SaaS', '47 customers', '$12,400 MRR'];
-
-async function fetchHealthScore(userId: string): Promise<{
+async function fetchHealthData(userId: string): Promise<{
   score: HealthScore;
   pills: string[];
-  orgName?: string;
 }> {
   try {
     await connectMongo();
 
-    // Try to find audit result from StripeConnection
     const StripeConnectionModel = (await import('@/models/StripeConnection')).default;
+    // StripeConnection uses `userId` field, not `orgId`
     const conn = await (StripeConnectionModel as any)
-      .findOne({ orgId: userId })
+      .findOne({ userId, syncStatus: 'done' })
+      .select('_id')
       .lean();
 
     if (!conn) {
-      return { score: MOCK_HEALTH_SCORE, pills: MOCK_PILLS };
+      return { score: DEMO_SCORE, pills: DEMO_PILLS };
     }
 
-    // Try to find subscription & invoice stats to build a real score
     const InvoiceModel = (await import('@/models/Invoice')).default;
     const SubscriptionModel = (await import('@/models/Subscription')).default;
 
-    const [openInvoices, activeSubs, totalInvoices, recoveredInvoices] = await Promise.all([
-      (InvoiceModel as any).find({ orgId: userId, status: 'open' }).lean(),
-      (SubscriptionModel as any).find({ orgId: userId, status: 'active' }).lean(),
+    const [openInvoices, activeSubs, totalInvoices, recoveredCount] = await Promise.all([
+      (InvoiceModel as any).find({ orgId: userId, status: 'open' }).select('recoveryScore').lean(),
+      (SubscriptionModel as any)
+        .find({ orgId: userId, status: 'active' })
+        .select('mrr recoveryScore cardExpMonth cardExpYear')
+        .lean(),
       (InvoiceModel as any).countDocuments({ orgId: userId }),
       (InvoiceModel as any).countDocuments({ orgId: userId, status: 'recovered' }),
     ]);
 
-    const totalMrr = activeSubs.reduce((sum: number, s: any) => sum + (s.mrr ?? 0), 0);
-
-    // Compute dimensions (0-100 scores)
-    const now = new Date();
-    const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-    const expiringCards = activeSubs.filter((s: any) => {
-      if (!s.cardExpMonth || !s.cardExpYear) return false;
-      const exp = new Date(s.cardExpYear, s.cardExpMonth - 1, 28);
-      return exp <= in30Days;
+    const { total, dimensions, pills } = computeHealthScore({
+      activeSubs,
+      openInvoices,
+      totalInvoices,
+      recoveredCount,
+      hasConnection: true,
     });
-    const expiryRisk = activeSubs.length > 0
-      ? Math.max(0, 100 - Math.round((expiringCards.length / activeSubs.length) * 100))
-      : 100;
 
-    const failureRate = totalInvoices > 0
-      ? Math.max(0, 100 - Math.round((openInvoices.length / totalInvoices) * 100))
-      : 100;
-
-    const recoveryRate = (openInvoices.length + recoveredInvoices) > 0
-      ? Math.round((recoveredInvoices / (openInvoices.length + recoveredInvoices)) * 100)
-      : 0;
-
-    const avgScore = activeSubs.length > 0
-      ? Math.round(
-          activeSubs.reduce((sum: number, s: any) => sum + (s.recoveryScore ?? 50), 0) /
-          activeSubs.length
-        )
-      : 50;
-    const customerRisk = avgScore;
-
-    const total = Math.round(
-      (expiryRisk + failureRate + recoveryRate + customerRisk) / 4
-    );
-
-    const score: HealthScore = {
-      total,
-      dimensions: {
-        expiryRisk,
-        failureRate,
-        recoveryRate,
-        customerRisk,
-        dunningConfig: true, // has stripe connection
-      },
+    return {
+      score: { total, dimensions },
+      pills,
     };
-
-    const pills: string[] = [];
-    if (activeSubs.length > 0) pills.push(`${activeSubs.length} customers`);
-    if (totalMrr > 0) {
-      pills.push(`${(totalMrr / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 })} MRR`);
-    }
-
-    return { score, pills };
   } catch (err) {
-    console.error('[HealthCardPage] Error fetching score:', err);
-    return { score: MOCK_HEALTH_SCORE, pills: MOCK_PILLS };
+    console.error('[HealthCardPage] Error:', err);
+    return { score: DEMO_SCORE, pills: DEMO_PILLS };
   }
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { userId } = await params;
-  const { score } = await fetchHealthScore(userId);
+  const { score } = await fetchHealthData(userId);
 
-  const scoreColor = score.total >= 70 ? 'good' : score.total >= 40 ? 'fair' : 'at risk';
+  const label = score.total >= 70 ? 'good' : score.total >= 40 ? 'fair' : 'at risk';
   const title = `Revenue Safety Score: ${score.total}/100 | REVENANT`;
-  const description = `My Stripe revenue health is ${scoreColor}. Protect your MRR from failed payments with REVENANT.`;
+  const description = `My Stripe revenue health is ${label}. Protect your MRR from failed payments with REVENANT.`;
 
   return {
     title,
     description,
-    openGraph: {
-      title,
-      description,
-      type: 'website',
-      siteName: 'REVENANT',
-    },
-    twitter: {
-      card: 'summary_large_image',
-      title,
-      description,
-    },
+    openGraph: { title, description, type: 'website', siteName: 'REVENANT' },
+    twitter: { card: 'summary_large_image', title, description },
   };
 }
 
@@ -144,14 +96,11 @@ function ZapIcon() {
 
 export default async function HealthCardPage({ params }: PageProps) {
   const { userId } = await params;
-  const { score, pills } = await fetchHealthScore(userId);
+  const { score, pills } = await fetchHealthData(userId);
 
-  const scoreLabel =
-    score.total >= 70 ? 'Good' : score.total >= 40 ? 'Fair' : 'At risk';
-  const scoreBg =
-    score.total >= 70 ? '#DCFCE7' : score.total >= 40 ? '#FEF9C3' : '#FEE2E2';
-  const scoreText =
-    score.total >= 70 ? '#15803D' : score.total >= 40 ? '#D97706' : '#DC2626';
+  const scoreLabel = score.total >= 70 ? 'Good' : score.total >= 40 ? 'Fair' : 'At risk';
+  const scoreBg = score.total >= 70 ? '#DCFCE7' : score.total >= 40 ? '#FEF9C3' : '#FEE2E2';
+  const scoreText = score.total >= 70 ? '#15803D' : score.total >= 40 ? '#D97706' : '#DC2626';
 
   return (
     <div
@@ -175,19 +124,13 @@ export default async function HealthCardPage({ params }: PageProps) {
             >
               {scoreLabel}
             </span>
-            <span className="text-[13px] text-[#4B5563]">
-              Based on your Stripe data
-            </span>
+            <span className="text-[13px] text-[#4B5563]">Based on your Stripe data</span>
           </div>
         </div>
 
         {/* Health card */}
         <div className="w-full">
-          <HealthCard
-            score={score.total}
-            dimensions={score.dimensions}
-            pills={pills}
-          />
+          <HealthCard score={score.total} dimensions={score.dimensions} pills={pills} />
         </div>
 
         {/* CTA */}
@@ -224,7 +167,6 @@ export default async function HealthCardPage({ params }: PageProps) {
             ].map((dim) => {
               const pct = typeof dim.value === 'boolean' ? (dim.value ? 100 : 0) : dim.value;
               const color = pct >= 70 ? '#16A34A' : pct >= 40 ? '#D97706' : '#DC2626';
-
               return (
                 <div key={dim.label} className="flex flex-col gap-1">
                   <div className="flex items-center justify-between">
