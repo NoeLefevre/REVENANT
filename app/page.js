@@ -185,7 +185,7 @@ function Problem() {
             Your MRR is leaking in 3 places
           </h2>
           <p className="text-[16px] text-[#4B5563] max-w-xl mx-auto">
-            Stripe is a billing tool, not a recovery tool. It doesn't know your customers,
+            Stripe is a billing tool, not a recovery tool. It doesn&apos;t know your customers,
             their pay cycles, or when to stop retrying.
           </p>
         </div>

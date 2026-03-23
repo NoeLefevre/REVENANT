@@ -61,7 +61,7 @@ async function fetchHealthData(userId: string): Promise<{
     });
 
     return {
-      score: { total, dimensions },
+      score: { total, dimensions: dimensions as HealthScore['dimensions'] },
       pills,
     };
   } catch (err) {

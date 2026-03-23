@@ -6,10 +6,8 @@ import { encrypt } from '@/libs/encryption';
 import StripeConnection from '@/models/StripeConnection';
 import User from '@/models/User';
 
-// ShipFast Stripe client — used ONLY to exchange OAuth code (REVENANT billing account)
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-
 export async function GET(request) {
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
   try {
     const session = await auth();
 

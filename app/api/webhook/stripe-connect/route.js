@@ -9,9 +9,6 @@ import Subscription from '@/models/Subscription';
 import Invoice from '@/models/Invoice';
 import DunningSequence from '@/models/DunningSequence';
 
-// ShipFast Stripe client — used ONLY to verify the webhook signature
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-
 // Dunning email delays in days, indexed by DIE category
 const SEQUENCE_DELAYS_DAYS = {
   SOFT_TEMPORARY: [0, 3, 7, 14, 21], // 5 emails
@@ -26,6 +23,7 @@ const SEQUENCE_DELAYS_DAYS = {
  * Uses STRIPE_CONNECT_WEBHOOK_SECRET for signature verification.
  */
 export async function POST(request) {
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
   const body = await request.text();
   const sig = request.headers.get('stripe-signature');
 

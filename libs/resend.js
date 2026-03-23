@@ -1,12 +1,6 @@
 import { Resend } from "resend";
 import config from "@/config";
 
-if (!process.env.RESEND_API_KEY) {
-  throw new Error("RESEND_API_KEY is not set");
-}
-
-const resend = new Resend(process.env.RESEND_API_KEY);
-
 /**
  * Sends an email using the provided parameters.
  *
@@ -20,6 +14,10 @@ const resend = new Resend(process.env.RESEND_API_KEY);
  * @returns {Promise<Object>} A Promise that resolves with the email sending result data.
  */
 export const sendEmail = async ({ to, subject, text, html, replyTo }) => {
+  if (!process.env.RESEND_API_KEY) {
+    throw new Error("RESEND_API_KEY is not set");
+  }
+  const resend = new Resend(process.env.RESEND_API_KEY);
   const { data, error } = await resend.emails.send({
     from: config.resend.fromAdmin,
     to,

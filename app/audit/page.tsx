@@ -1,3 +1,4 @@
+import React from 'react';
 import Link from 'next/link';
 import { auth } from '@/libs/auth';
 import connectMongo from '@/libs/mongoose';
@@ -222,13 +223,13 @@ export default async function AuditPage() {
               Go to dashboard →
             </Link>
           ) : (
-            <a
+            <Link
               href="/api/auth/signin?callbackUrl=/onboarding"
               className="w-full py-3 rounded-lg text-white text-[15px] font-semibold text-center transition-opacity hover:opacity-90"
               style={{ backgroundColor: '#6C63FF' }}
             >
               Activate REVENANT →
-            </a>
+            </Link>
           )}
           <Link
             href="/overview"

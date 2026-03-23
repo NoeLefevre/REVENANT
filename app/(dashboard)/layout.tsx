@@ -1,3 +1,4 @@
+import React from 'react';
 import { redirect } from 'next/navigation';
 import { auth } from '@/libs/auth';
 import connectMongo from '@/libs/mongoose';
