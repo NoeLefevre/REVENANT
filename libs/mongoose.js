@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 const connectMongo = async () => {
   if (!process.env.MONGODB_URI) {
     throw new Error(
-      "Add the MONGODB_URI environment variable inside .env.local to use mongoose"
+      "MONGODB_URI is not defined in environment variables"
     );
   }
 
@@ -12,7 +12,11 @@ const connectMongo = async () => {
   }
 
   return mongoose
-    .connect(process.env.MONGODB_URI)
+    .connect(process.env.MONGODB_URI, {
+      serverSelectionTimeoutMS: 5000,
+      tls: true,
+      tlsAllowInvalidCertificates: false,
+    })
     .catch((e) => console.error("Mongoose Client Error: " + e.message));
 };
 

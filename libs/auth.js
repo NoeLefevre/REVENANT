@@ -6,7 +6,10 @@ import config from "@/config"
 import connectMongo from "./mongo"
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  
+
+  // Required for Vercel / reverse-proxy deployments (NextAuth v5)
+  trustHost: true,
+
   // Set any random key in .env.local
   secret: process.env.AUTH_SECRET,
   
