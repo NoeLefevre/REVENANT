@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import connectMongo from '@/libs/mongoose';
-import { decrypt } from '@/libs/encryption';
 import { syncStripeData } from '@/libs/stripeConnect';
 import StripeConnection from '@/models/StripeConnection';
 

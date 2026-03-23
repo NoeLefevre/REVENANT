@@ -184,11 +184,6 @@ export default async function PreventionPage() {
             const brand = sub.cardBrand
               ? sub.cardBrand.charAt(0).toUpperCase() + sub.cardBrand.slice(1)
               : '';
-            const expiryLabel =
-              sub.cardExpMonth && sub.cardExpYear
-                ? `${String(sub.cardExpMonth).padStart(2, '0')}/${String(sub.cardExpYear).slice(-2)}`
-                : '—';
-
             return (
               <div
                 key={sub._id?.toString()}

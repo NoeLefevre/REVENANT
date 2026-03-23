@@ -1,9 +1,15 @@
 import crypto from 'crypto';
 
 const ALGO = 'aes-256-gcm';
-const KEY = Buffer.from(process.env.ENCRYPTION_KEY, 'hex');
+
+function getKey() {
+  const key = process.env.ENCRYPTION_KEY;
+  if (!key) throw new Error('ENCRYPTION_KEY is not defined');
+  return Buffer.from(key, 'hex');
+}
 
 export function encrypt(plaintext) {
+  const KEY = getKey();
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv(ALGO, KEY, iv);
   const encrypted = Buffer.concat([
@@ -15,6 +21,7 @@ export function encrypt(plaintext) {
 }
 
 export function decrypt(ciphertext) {
+  const KEY = getKey();
   const [ivHex, tagHex, encHex] = ciphertext.split(':');
   const iv = Buffer.from(ivHex, 'hex');
   const tag = Buffer.from(tagHex, 'hex');

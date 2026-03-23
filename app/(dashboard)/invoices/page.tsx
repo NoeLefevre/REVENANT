@@ -4,7 +4,7 @@ import connectMongo from '@/libs/mongoose';
 import InvoiceModel from '@/models/Invoice';
 import DIEBadge from '@/components/revenant/DIEBadge';
 import RecoveryScore from '@/components/revenant/RecoveryScore';
-import { Invoice, DIECategory, InvoiceStatus } from '@/types/revenant';
+import { Invoice, InvoiceStatus } from '@/types/revenant';
 
 const PAGE_SIZE = 20;
 

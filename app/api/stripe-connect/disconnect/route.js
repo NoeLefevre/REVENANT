@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { auth } from '@/libs/auth';
 import connectMongo from '@/libs/mongoose';
-import { decrypt } from '@/libs/encryption';
 import StripeConnection from '@/models/StripeConnection';
 import User from '@/models/User';
 
