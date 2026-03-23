@@ -8,7 +8,7 @@ import connectMongo from "./mongo"
 export const { handlers, auth, signIn, signOut } = NextAuth({
   
   // Set any random key in .env.local
-  secret: process.env.NEXTAUTH_SECRET,
+  secret: process.env.AUTH_SECRET,
   
   // Add EmailProvider only for server-side usage (not edge-compatible)
   providers: [
