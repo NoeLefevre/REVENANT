@@ -37,12 +37,14 @@ export default function OnboardingDonePage() {
         body: JSON.stringify({ mrrBand: selected }),
       });
 
+      const data = await res.json();
+
       if (!res.ok) {
-        const data = await res.json();
         throw new Error(data.error || 'Failed to save MRR band');
       }
 
-      router.push('/overview');
+      // Redirect to Stripe Checkout
+      window.location.href = data.checkoutUrl;
     } catch (err: any) {
       setError(err.message);
       setLoading(false);

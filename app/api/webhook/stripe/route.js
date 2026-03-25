@@ -55,7 +55,14 @@ export async function POST(req) {
         const userId = data.object.client_reference_id;
         const plan = configFile.stripe.plans.find((p) => p.priceId === priceId);
 
-        if (!plan) break;
+        if (!plan) {
+          console.error(
+            `[webhook] checkout.session.completed — no plan found for priceId="${priceId}". ` +
+            `Configured priceIds: ${configFile.stripe.plans.map((p) => p.priceId).join(', ')}. ` +
+            `Check STRIPE_PRICE_UNDER_30K / STRIPE_PRICE_30K_80K / STRIPE_PRICE_OVER_80K env vars.`
+          );
+          break;
+        }
 
         const customer = await stripe.customers.retrieve(customerId);
 
