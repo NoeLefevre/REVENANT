@@ -7,7 +7,8 @@ export async function POST(request) {
   try {
     // Internal-only endpoint — verify shared secret
     const internalSecret = request.headers.get('x-internal-secret');
-    if (internalSecret !== process.env.INTERNAL_SECRET) {
+    if (!process.env.INTERNAL_SECRET || internalSecret !== process.env.INTERNAL_SECRET) {
+      console.error('[stripe-connect/sync] Forbidden — bad or missing INTERNAL_SECRET. Received:', internalSecret);
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -28,18 +29,21 @@ export async function POST(request) {
     // Mark as syncing before starting
     await StripeConnection.findByIdAndUpdate(connection._id, { syncStatus: 'syncing' });
 
-    // Run sync asynchronously — response returns immediately, sync continues in background
-    syncStripeData(userId, connection.stripeAccountId, connection.accessToken).catch(
-      async (err) => {
-        console.error('[stripe-connect/sync] syncStripeData failed:', err);
-        await StripeConnection.findByIdAndUpdate(connection._id, {
-          syncStatus: 'error',
-          syncError: err.message,
-        });
-      }
-    );
+    console.log('[stripe-connect/sync] Starting syncStripeData for userId:', userId);
 
-    return NextResponse.json({ success: true, message: 'Sync started' });
+    // Await synchronously — Vercel kills fire-and-forget promises when the response is sent
+    try {
+      await syncStripeData(userId, connection.stripeAccountId, connection.accessToken);
+      console.log('[stripe-connect/sync] syncStripeData completed for userId:', userId);
+    } catch (err) {
+      console.error('[stripe-connect/sync] syncStripeData failed:', err);
+      await StripeConnection.findByIdAndUpdate(connection._id, {
+        syncStatus: 'error',
+        syncError: err.message,
+      });
+    }
+
+    return NextResponse.json({ success: true, message: 'Sync complete' });
   } catch (error) {
     console.error('[stripe-connect/sync]', error);
     return NextResponse.json(

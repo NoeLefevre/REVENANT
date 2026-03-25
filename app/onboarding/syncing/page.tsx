@@ -38,6 +38,10 @@ export default function SyncingPage() {
     // Don't start polling until we know the user is authenticated
     if (status !== 'authenticated') return;
 
+    const POLL_INTERVAL_MS = 3000;
+    const MAX_POLL_MS = 90000; // 90s hard timeout — sync should never take longer
+    const startedAt = Date.now();
+
     // Cycle through step labels every 2.5s for UX feedback
     const labelInterval = setInterval(() => {
       setStepIndex((i) => Math.min(i + 1, STEPS.length - 1));
@@ -45,10 +49,24 @@ export default function SyncingPage() {
 
     // Poll sync status every 3s
     const pollInterval = setInterval(async () => {
+      // Hard timeout — stop polling and surface an error after 90s
+      if (Date.now() - startedAt > MAX_POLL_MS) {
+        clearInterval(labelInterval);
+        clearInterval(pollInterval);
+        setError('Sync is taking too long. Please try again or contact support.');
+        return;
+      }
+
       try {
         const res = await fetch('/api/stripe-connect/status');
-        if (!res.ok) return;
+
+        if (!res.ok) {
+          console.warn('[syncing] /api/stripe-connect/status returned', res.status);
+          return;
+        }
+
         const data = await res.json();
+        console.log('[syncing] poll →', data.syncStatus, data.syncError ?? '');
 
         if (data.syncStatus === 'done') {
           clearInterval(labelInterval);
@@ -59,10 +77,12 @@ export default function SyncingPage() {
           clearInterval(pollInterval);
           setError(data.syncError || 'Sync failed. Please try again.');
         }
+        // 'pending' or 'syncing' → keep polling
       } catch {
         // Network error — keep polling
+        console.warn('[syncing] poll fetch failed, retrying...');
       }
-    }, 3000);
+    }, POLL_INTERVAL_MS);
 
     return () => {
       clearInterval(labelInterval);
