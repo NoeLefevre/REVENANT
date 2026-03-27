@@ -3,6 +3,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { signOut } from 'next-auth/react';
 
 interface SidebarProps {
   user?: {
@@ -229,7 +230,7 @@ export default function Sidebar({ user, hasAccess = false }: SidebarProps) {
         >
           {getInitials(user?.name, user?.email)}
         </div>
-        <div className="flex flex-col min-w-0">
+        <div className="flex flex-col min-w-0 flex-1">
           {user?.name && (
             <span className="text-[12px] font-medium text-[#1A1A1A] truncate">{user.name}</span>
           )}
@@ -237,6 +238,30 @@ export default function Sidebar({ user, hasAccess = false }: SidebarProps) {
             <span className="text-[11px] text-[#9CA3AF] truncate">{user.email}</span>
           )}
         </div>
+        <button
+          onClick={() => signOut({ callbackUrl: '/' })}
+          title="Se déconnecter"
+          className="flex-shrink-0 flex items-center justify-center rounded-md transition-colors group"
+          style={{ width: '28px', height: '28px' }}
+          onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#FEE2E2')}
+          onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+        >
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="#9CA3AF"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="group-hover:stroke-red-500 transition-colors"
+          >
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
+          </svg>
+        </button>
       </div>
     </aside>
   );
