@@ -1,5 +1,9 @@
+import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import DashboardPreview from '@/components/revenant/DashboardPreview';
+import { auth } from '@/libs/auth';
+import connectMongo from '@/libs/mongoose';
+import UserModel from '@/models/User';
 
 export const metadata = {
   title: 'REVENANT — Stop Losing MRR to Failed Payments',
@@ -618,7 +622,23 @@ function Footer() {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-export default function Home() {
+export default async function Home() {
+  const session = await auth();
+
+  if (session?.user?.email) {
+    try {
+      await connectMongo();
+      const dbUser = await UserModel.findOne({ email: session.user.email }).lean();
+      if (dbUser?.stripeConnectionId) {
+        redirect('/overview');
+      } else {
+        redirect('/onboarding');
+      }
+    } catch {
+      // DB error → don't block the landing page
+    }
+  }
+
   return (
     <>
       <Header />
