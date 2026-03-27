@@ -71,7 +71,7 @@ export default function SyncingPage() {
         if (data.syncStatus === 'done') {
           clearInterval(labelInterval);
           clearInterval(pollInterval);
-          router.push('/onboarding/done');
+          router.push('/onboarding/score');
         } else if (data.syncStatus === 'error') {
           clearInterval(labelInterval);
           clearInterval(pollInterval);

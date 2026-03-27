@@ -18,6 +18,20 @@ const stripeConnectionSchema = new mongoose.Schema({
   syncError: { type: String },
   lastSyncAt: { type: Date },
   connectedAt: { type: Date, default: Date.now },
+  // Revenue Health Score — computed at end of each sync
+  healthScore: {
+    total: { type: Number },
+    dimensions: {
+      expiryRisk:    { type: Number },
+      failureRate:   { type: Number },
+      recoveryRate:  { type: Number },
+      customerRisk:  { type: Number },
+      dunningConfig: { type: Boolean },
+    },
+    computedAt: { type: Date },
+  },
+  // Onboarding nurture email tracking (steps 0-3 = emails 1-4)
+  onboardingEmailsSent: { type: [Number], default: [] },
 }, { timestamps: true });
 
 // Used in cron/prevention: find({ syncStatus: 'done' })

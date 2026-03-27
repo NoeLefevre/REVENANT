@@ -2,6 +2,7 @@ import Stripe from 'stripe';
 import connectMongo from '@/libs/mongoose';
 import { decrypt } from '@/libs/encryption';
 import { classifyDecline } from '@/libs/die';
+import { computeHealthScore } from '@/libs/healthScore';
 import StripeConnection from '@/models/StripeConnection';
 import Subscription from '@/models/Subscription';
 import Invoice from '@/models/Invoice';
@@ -200,9 +201,30 @@ export async function syncStripeData(userId, stripeAccountId, encryptedAccessTok
     }
   }
 
-  // ── 3. Mark sync as complete ─────────────────────────────────────────────────
+  // ── 3. Compute Revenue Health Score ──────────────────────────────────────────
+  const [activeSubs, openInvoices, totalInvoices, recoveredCount] = await Promise.all([
+    Subscription.find({ orgId: userId, status: 'active' }).lean(),
+    Invoice.find({ orgId: userId, status: 'open' }).lean(),
+    Invoice.countDocuments({ orgId: userId }),
+    Invoice.countDocuments({ orgId: userId, status: 'recovered' }),
+  ]);
+
+  const healthScore = computeHealthScore({
+    activeSubs,
+    openInvoices,
+    totalInvoices,
+    recoveredCount,
+    hasConnection: true,
+  });
+
+  // ── 4. Mark sync as complete ──────────────────────────────────────────────────
   await StripeConnection.findOneAndUpdate(
     { userId },
-    { syncStatus: 'done', lastSyncAt: new Date(), syncError: null }
+    {
+      syncStatus: 'done',
+      lastSyncAt: new Date(),
+      syncError: null,
+      healthScore: { ...healthScore, computedAt: new Date() },
+    }
   );
 }

@@ -19,7 +19,7 @@ export async function GET() {
     await connectMongo();
 
     const connection = await StripeConnection.findOne({ userId: session.user.id })
-      .select('syncStatus syncError')
+      .select('syncStatus syncError healthScore')
       .lean();
 
     if (!connection) {
@@ -29,6 +29,7 @@ export async function GET() {
     return NextResponse.json({
       syncStatus: connection.syncStatus,
       syncError: connection.syncError ?? null,
+      healthScore: connection.healthScore ?? null,
     });
   } catch (error) {
     console.error('[stripe-connect/status]', error);

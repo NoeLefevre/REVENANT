@@ -7,7 +7,9 @@
       "Bash(ls \"/c/Users/lefev/Documents/Projet à 1 million/ship-fast-main/app/\\(dashboard\\)/customers/\")",
       "Bash(ls \"/c/Users/lefev/Documents/Projet à 1 million/ship-fast-main/app/\\(dashboard\\)/prevention/\")",
       "Bash(npm run:*)",
-      "Bash(echo \"exit: $?\")"
+      "Bash(echo \"exit: $?\")",
+      "Bash(ls:*)",
+      "Bash(cat:*)"
     ]
   }
 }

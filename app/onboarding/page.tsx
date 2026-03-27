@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { auth } from '@/libs/auth';
 import connectMongo from '@/libs/mongoose';
 import StripeConnectionModel from '@/models/StripeConnection';
+import UserModel from '@/models/User';
 
 function ZapIcon() {
   return (
@@ -17,7 +18,9 @@ export default async function OnboardingPage() {
     redirect('/api/auth/signin?callbackUrl=/onboarding');
   }
 
-  // If already connected, skip to syncing or overview
+  // If already connected, skip to the appropriate step
+  // redirect() must be called OUTSIDE try/catch (throws NEXT_REDIRECT internally)
+  let destination: string | null = null;
   try {
     await connectMongo();
     const connection = await (StripeConnectionModel as any)
@@ -27,14 +30,21 @@ export default async function OnboardingPage() {
     if (connection) {
       const status = (connection as any).syncStatus;
       if (status === 'done') {
-        redirect('/overview');
+        // Sync done: send to score page if not yet subscribed, else to dashboard
+        const dbUser = await (UserModel as any)
+          .findOne({ _id: session.user.id })
+          .select('hasAccess')
+          .lean();
+        destination = (dbUser as any)?.hasAccess ? '/overview' : '/onboarding/score';
       } else {
-        redirect('/onboarding/syncing');
+        destination = '/onboarding/syncing';
       }
     }
   } catch (err) {
     console.error('[OnboardingPage] Error:', err);
   }
+
+  if (destination) redirect(destination);
 
   return (
     <div
