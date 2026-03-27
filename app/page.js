@@ -626,17 +626,19 @@ export default async function Home() {
   const session = await auth();
 
   if (session?.user?.email) {
+    // Determine destination before calling redirect() — redirect() throws internally
+    // and must never be inside a try/catch or it gets silently swallowed.
+    let destination = '/onboarding';
     try {
       await connectMongo();
       const dbUser = await UserModel.findOne({ email: session.user.email }).lean();
       if (dbUser?.stripeConnectionId) {
-        redirect('/overview');
-      } else {
-        redirect('/onboarding');
+        destination = '/overview';
       }
     } catch {
-      // DB error → don't block the landing page
+      // DB error → safe default: redirect to /onboarding
     }
+    redirect(destination);
   }
 
   return (
