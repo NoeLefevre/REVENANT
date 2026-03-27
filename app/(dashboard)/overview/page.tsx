@@ -5,9 +5,11 @@ import InvoiceModel from '@/models/Invoice';
 import SubscriptionModel from '@/models/Subscription';
 import DunningSequenceModel from '@/models/DunningSequence';
 import StripeConnectionModel from '@/models/StripeConnection';
+import UserModel from '@/models/User';
 import AtRiskBanner from '@/components/revenant/AtRiskBanner';
 import MetricCard from '@/components/revenant/MetricCard';
 import WarRoomBoard from '@/components/revenant/WarRoomBoard';
+import HealthCard from '@/components/revenant/HealthCard';
 import { Invoice } from '@/types/revenant';
 
 function formatCurrency(cents: number): string {
@@ -79,13 +81,19 @@ export default async function OverviewPage() {
   let protectedMrrLastMonth = 0;
   let activeSequences = 0;
   let sequencesCompletingThisWeek = 0;
+  let hasAccess = false;
   let error: string | null = null;
 
   try {
     await connectMongo();
 
     // StripeConnection uses userId (not orgId)
-    stripeConnection = await (StripeConnectionModel as any).findOne({ userId: orgId }).lean();
+    const [rawConnection, dbUser] = await Promise.all([
+      (StripeConnectionModel as any).findOne({ userId: orgId }).lean(),
+      (UserModel as any).findById(orgId).select('hasAccess').lean(),
+    ]);
+    stripeConnection = rawConnection;
+    hasAccess = dbUser?.hasAccess ?? false;
 
     if (stripeConnection) {
       // Open invoices
@@ -214,6 +222,46 @@ export default async function OverviewPage() {
       <div className="p-6 flex flex-col gap-6">
         {/* Page title */}
         <h1 className="text-[22px] font-bold text-[#1A1A1A]">Overview</h1>
+
+        {/* Revenue Health Score */}
+        {stripeConnection?.healthScore?.total != null ? (
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <h2 className="text-[15px] font-semibold text-[#1A1A1A]">Revenue Health Score</h2>
+              {hasAccess ? (
+                <span
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12px] font-semibold"
+                  style={{ backgroundColor: '#DCFCE7', color: '#15803D' }}
+                >
+                  🛡️ Protected
+                </span>
+              ) : (
+                <a
+                  href="/onboarding/score"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12px] font-semibold transition-opacity hover:opacity-80"
+                  style={{ backgroundColor: '#EDE9FE', color: '#6C63FF' }}
+                >
+                  Activate protection →
+                </a>
+              )}
+            </div>
+            <HealthCard
+              score={stripeConnection.healthScore.total}
+              dimensions={stripeConnection.healthScore.dimensions}
+              pills={stripeConnection.healthScore.pills ?? []}
+            />
+          </div>
+        ) : stripeConnection ? (
+          <div
+            className="rounded-lg p-4 flex items-center gap-3"
+            style={{ backgroundColor: '#F7F5F2', border: '1px solid #F0EDE8' }}
+          >
+            <div className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: '#6C63FF' }} />
+            <span className="text-[13px] text-[#4B5563]">
+              Revenue Health Score is being computed…
+            </span>
+          </div>
+        ) : null}
 
         {/* Metrics row */}
         <div className="grid grid-cols-3 gap-4">
