@@ -17,12 +17,18 @@ const emailEventSchema = new mongoose.Schema({
     ],
     required: true,
   },
-  step: { type: Number }, // 0-indexed step within dunning sequence
+  step: { type: Number },
   resendMessageId: { type: String },
   sentAt: { type: Date, default: Date.now },
   openedAt: { type: Date },
   clickedAt: { type: Date },
 }, { timestamps: true });
+
+// Dedup check in cron/prevention: subscriptionId + type + sentAt range
+emailEventSchema.index({ subscriptionId: 1, type: 1, sentAt: 1 });
+
+// Reporting queries by org
+emailEventSchema.index({ orgId: 1, type: 1 });
 
 export default mongoose.models.EmailEvent ||
   mongoose.model('EmailEvent', emailEventSchema);

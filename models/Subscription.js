@@ -12,7 +12,7 @@ const subscriptionSchema = new mongoose.Schema({
     enum: ['active', 'past_due', 'canceled', 'trialing', 'unpaid'],
     required: true,
   },
-  mrr: { type: Number, default: 0 }, // in cents
+  mrr: { type: Number, default: 0 },
   planId: { type: String },
   currentPeriodStart: { type: Date },
   currentPeriodEnd: { type: Date },
@@ -28,7 +28,7 @@ const subscriptionSchema = new mongoose.Schema({
   recoveryScore: { type: Number, default: null },
   recoveryScoreUpdatedAt: { type: Date },
   // Payday inference
-  inferredPaydayCycle: { type: String }, // e.g. '5' = 5th of month
+  inferredPaydayCycle: { type: String },
   inferredPaydaySource: {
     type: String,
     enum: ['inferred', 'country_benchmark', 'default'],
@@ -38,6 +38,9 @@ const subscriptionSchema = new mongoose.Schema({
 
 subscriptionSchema.index({ orgId: 1, stripeSubscriptionId: 1 });
 subscriptionSchema.index({ orgId: 1, status: 1 });
+
+// Used in webhook payment_method.updated: updateMany({ paymentMethodId: pm.id })
+subscriptionSchema.index({ paymentMethodId: 1 });
 
 export default mongoose.models.Subscription ||
   mongoose.model('Subscription', subscriptionSchema);

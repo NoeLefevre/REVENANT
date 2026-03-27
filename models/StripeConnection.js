@@ -20,5 +20,8 @@ const stripeConnectionSchema = new mongoose.Schema({
   connectedAt: { type: Date, default: Date.now },
 }, { timestamps: true });
 
+// Used in cron/prevention: find({ syncStatus: 'done' })
+stripeConnectionSchema.index({ syncStatus: 1 });
+
 export default mongoose.models.StripeConnection ||
   mongoose.model('StripeConnection', stripeConnectionSchema);

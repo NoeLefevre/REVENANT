@@ -9,19 +9,37 @@ import Invoice from '@/models/Invoice';
 /**
  * Returns an authenticated Stripe client for a connected account.
  * IMPORTANT: This uses the decrypted client access token, NEVER STRIPE_SECRET_KEY.
- *
- * @param {string} encryptedAccessToken - The encrypted access token from StripeConnection
- * @returns {Stripe}
  */
 export function getClientStripe(encryptedAccessToken) {
   return new Stripe(decrypt(encryptedAccessToken));
 }
 
 /**
+ * Wraps a Stripe list call with automatic retry on rate-limit (429).
+ * Respects the Retry-After header when present.
+ */
+async function stripeListWithRetry(fn, maxRetries = 3) {
+  let attempt = 0;
+  while (attempt <= maxRetries) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (err?.statusCode === 429 && attempt < maxRetries) {
+        const retryAfterMs = err?.headers?.['retry-after']
+          ? parseInt(err.headers['retry-after'], 10) * 1000
+          : Math.min(1000 * 2 ** attempt, 30000); // exponential backoff, max 30s
+        console.warn(`[stripeConnect] Rate limited, retrying in ${retryAfterMs}ms (attempt ${attempt + 1})`);
+        await new Promise((resolve) => setTimeout(resolve, retryAfterMs));
+        attempt++;
+      } else {
+        throw err;
+      }
+    }
+  }
+}
+
+/**
  * Computes the Monthly Recurring Revenue in cents from a Stripe subscription object.
- *
- * @param {Object} sub - Stripe subscription object
- * @returns {number} MRR in cents
  */
 function computeMRR(sub) {
   if (!sub.items?.data?.length) return 0;
@@ -51,15 +69,10 @@ function computeMRR(sub) {
  * Full initial sync of a connected Stripe account.
  * Fetches all subscriptions + last 90 days of failed invoices.
  * Updates StripeConnection.syncStatus on completion.
- *
- * @param {string} userId - REVENANT User._id (as string)
- * @param {string} stripeAccountId - e.g. 'acct_xxx'
- * @param {string} encryptedAccessToken - AES-256-GCM encrypted access token from StripeConnection
  */
 export async function syncStripeData(userId, stripeAccountId, encryptedAccessToken) {
   await connectMongo();
 
-  // Use the CLIENT's Stripe client — never REVENANT's STRIPE_SECRET_KEY
   const clientStripe = getClientStripe(encryptedAccessToken);
 
   // ── 1. Sync all subscriptions ───────────────────────────────────────────────
@@ -67,21 +80,24 @@ export async function syncStripeData(userId, stripeAccountId, encryptedAccessTok
   let startingAfter = undefined;
 
   while (hasMore) {
-    const subs = await clientStripe.subscriptions.list({
-      limit: 100,
-      status: 'all',
-      expand: ['data.default_payment_method', 'data.customer'],
-      ...(startingAfter && { starting_after: startingAfter }),
-    });
+    const subs = await stripeListWithRetry(() =>
+      clientStripe.subscriptions.list({
+        limit: 100,
+        status: 'all',
+        expand: ['data.default_payment_method', 'data.customer'],
+        ...(startingAfter && { starting_after: startingAfter }),
+      })
+    );
 
     for (const sub of subs.data) {
       let cardMeta = {};
 
-      // Retrieve card metadata from the default payment method
       if (sub.default_payment_method) {
         const pm =
           typeof sub.default_payment_method === 'string'
-            ? await clientStripe.paymentMethods.retrieve(sub.default_payment_method)
+            ? await stripeListWithRetry(() =>
+                clientStripe.paymentMethods.retrieve(sub.default_payment_method)
+              )
             : sub.default_payment_method;
 
         cardMeta = {
@@ -134,16 +150,17 @@ export async function syncStripeData(userId, stripeAccountId, encryptedAccessTok
   let invoiceStartingAfter = undefined;
 
   while (invoiceHasMore) {
-    const invoices = await clientStripe.invoices.list({
-      limit: 100,
-      status: 'open',
-      created: { gte: since },
-      expand: ['data.customer'],
-      ...(invoiceStartingAfter && { starting_after: invoiceStartingAfter }),
-    });
+    const invoices = await stripeListWithRetry(() =>
+      clientStripe.invoices.list({
+        limit: 100,
+        status: 'open',
+        created: { gte: since },
+        expand: ['data.customer'],
+        ...(invoiceStartingAfter && { starting_after: invoiceStartingAfter }),
+      })
+    );
 
     for (const inv of invoices.data) {
-      // Only process invoices that actually failed a payment attempt
       if (!inv.last_payment_error) continue;
 
       const failureCode = inv.last_payment_error?.code ?? null;

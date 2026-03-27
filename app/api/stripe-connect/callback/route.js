@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { auth } from '@/libs/auth';
+import { cookies } from 'next/headers';
 import connectMongo from '@/libs/mongoose';
 import { encrypt } from '@/libs/encryption';
 import StripeConnection from '@/models/StripeConnection';
@@ -28,8 +29,12 @@ export async function GET(request) {
       );
     }
 
-    // CSRF check: state must match the logged-in user's ID
-    if (state !== session.user.id) {
+    // CSRF check: state must match the random token stored in the httpOnly cookie
+    const cookieStore = await cookies();
+    const savedState = cookieStore.get('stripe_oauth_state')?.value;
+
+    if (!savedState || !state || state !== savedState) {
+      console.error('[stripe-connect/callback] CSRF state mismatch');
       return NextResponse.json({ error: 'Invalid state parameter' }, { status: 400 });
     }
 
@@ -75,9 +80,13 @@ export async function GET(request) {
       body: JSON.stringify({ userId: session.user.id }),
     }).catch((err) => console.error('[stripe-connect/callback] sync trigger failed:', err));
 
-    return NextResponse.redirect(
+    // Clear the CSRF state cookie and redirect
+    const redirectResponse = NextResponse.redirect(
       `${process.env.NEXT_PUBLIC_APP_URL}/onboarding/syncing`
     );
+    redirectResponse.cookies.delete('stripe_oauth_state');
+    return redirectResponse;
+
   } catch (error) {
     console.error('[stripe-connect/callback]', error);
     return NextResponse.json(

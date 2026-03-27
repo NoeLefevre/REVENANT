@@ -54,7 +54,9 @@ const CrispChat = () => {
 const ClientLayout = ({ children }) => {
   return (
     <>
-      <SessionProvider>
+      {/* refetchOnWindowFocus=false: prevents /api/auth/session being called on every tab switch */}
+      {/* refetchInterval=0: no background polling (session is validated server-side on each navigation) */}
+      <SessionProvider refetchOnWindowFocus={false} refetchInterval={0}>
         {/* Show a progress bar at the top when navigating between pages */}
         <NextTopLoader color={config.colors.main} showSpinner={false} />
 

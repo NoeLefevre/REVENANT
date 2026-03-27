@@ -35,12 +35,34 @@ export async function GET(request) {
       retryCount: { $lt: MAX_RETRIES },
     }).lean();
 
+    if (invoices.length === 0) {
+      return NextResponse.json({ processed: 0, recovered: 0, rescheduled: 0, failed: 0 });
+    }
+
+    // Batch-load all needed StripeConnections in one query (avoid N+1)
+    const orgIds = [...new Set(invoices.map((inv) => String(inv.orgId)))];
+    const connections = await StripeConnection.find({ userId: { $in: orgIds } }).lean();
+    const connectionByOrgId = Object.fromEntries(
+      connections.map((c) => [String(c.userId), c])
+    );
+
+    // Batch-load all needed Subscriptions in one query (avoid N+1)
+    const subscriptionIds = invoices
+      .map((inv) => inv.stripeSubscriptionId)
+      .filter(Boolean);
+    const subscriptions = await Subscription.find({
+      stripeSubscriptionId: { $in: subscriptionIds },
+    }).lean();
+    const subscriptionByStripeId = Object.fromEntries(
+      subscriptions.map((s) => [s.stripeSubscriptionId, s])
+    );
+
     let recovered = 0;
     let rescheduled = 0;
     let failed = 0;
 
     for (const inv of invoices) {
-      const connection = await StripeConnection.findOne({ userId: inv.orgId }).lean();
+      const connection = connectionByOrgId[String(inv.orgId)];
 
       if (!connection || connection.syncStatus !== 'done') {
         continue;
@@ -96,11 +118,8 @@ export async function GET(request) {
             await stopDunningSequence(inv._id, newCategory === 'HARD_PERMANENT' ? 'hard_failure' : 'card_updated');
             failed++;
           } else {
-            // Reschedule next retry
-            const sub = await Subscription.findOne({
-              stripeSubscriptionId: inv.stripeSubscriptionId,
-              orgId: inv.orgId,
-            }).lean();
+            // Reschedule next retry using pre-loaded subscription
+            const sub = subscriptionByStripeId[inv.stripeSubscriptionId] ?? null;
 
             const { retryAt, source } = computeRetryDate({
               failedAt: now,

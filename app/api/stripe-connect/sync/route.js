@@ -3,12 +3,16 @@ import connectMongo from '@/libs/mongoose';
 import { syncStripeData } from '@/libs/stripeConnect';
 import StripeConnection from '@/models/StripeConnection';
 
+// Vercel Pro: allow up to 5 minutes for large Stripe account syncs
+export const maxDuration = 300;
+
 export async function POST(request) {
   try {
     // Internal-only endpoint — verify shared secret
     const internalSecret = request.headers.get('x-internal-secret');
     if (!process.env.INTERNAL_SECRET || internalSecret !== process.env.INTERNAL_SECRET) {
-      console.error('[stripe-connect/sync] Forbidden — bad or missing INTERNAL_SECRET. Received:', internalSecret);
+      // Never log the received value — could help brute-force attempts
+      console.error('[stripe-connect/sync] Forbidden — invalid or missing x-internal-secret');
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 

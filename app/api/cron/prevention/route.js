@@ -20,86 +20,118 @@ export async function GET(request) {
     await connectMongo();
 
     const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const in7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
+    // ── 1. Load all active connections in one query ───────────────────────────
     const connections = await StripeConnection.find({ syncStatus: 'done' }).lean();
 
+    if (connections.length === 0) {
+      return NextResponse.json({ accounts: 0, expiryEmailsSent: 0, chargebackShieldSent: 0 });
+    }
+
+    const orgIds = connections.map((c) => c.userId);
+
+    // ── 2. Load all relevant subscriptions in one query ───────────────────────
+    const subscriptions = await Subscription.find({
+      orgId: { $in: orgIds },
+      status: { $in: ['active', 'trialing'] },
+      customerEmail: { $exists: true, $ne: null },
+      cardExpMonth: { $exists: true, $ne: null },
+      cardExpYear: { $exists: true, $ne: null },
+    }).lean();
+
+    if (subscriptions.length === 0) {
+      return NextResponse.json({ accounts: connections.length, expiryEmailsSent: 0, chargebackShieldSent: 0 });
+    }
+
+    const subIds = subscriptions.map((s) => s._id);
+
+    // ── 3. Load all recent EmailEvents for these subscriptions in one query ───
+    // We need events since monthStart (expiry dedup) and since currentPeriodStart (chargeback dedup).
+    // Using monthStart as the lower bound covers both cases.
+    const recentEvents = await EmailEvent.find({
+      subscriptionId: { $in: subIds },
+      type: { $in: ['expiry_j30', 'expiry_j14', 'expiry_j7', 'chargeback_shield'] },
+      sentAt: { $gte: monthStart },
+    }).lean();
+
+    // Index events by subscriptionId+type for O(1) lookup
+    // Key: `${subscriptionId}:${type}` → earliest sentAt for that combo
+    const eventIndex = new Map();
+    for (const ev of recentEvents) {
+      const key = `${String(ev.subscriptionId)}:${ev.type}`;
+      const existing = eventIndex.get(key);
+      if (!existing || ev.sentAt < existing) {
+        eventIndex.set(key, ev.sentAt);
+      }
+    }
+
+    // ── 4. Process subscriptions in memory ────────────────────────────────────
     let expiryEmailsSent = 0;
     let chargebackShieldSent = 0;
+    const emailCreateOps = [];
 
-    for (const connection of connections) {
-      const orgId = connection.userId;
+    for (const sub of subscriptions) {
+      const days = daysUntilCardExpiry(sub.cardExpMonth, sub.cardExpYear, now);
 
-      const subscriptions = await Subscription.find({
-        orgId,
-        status: { $in: ['active', 'trialing'] },
-        customerEmail: { $exists: true, $ne: null },
-        cardExpMonth: { $exists: true, $ne: null },
-        cardExpYear: { $exists: true, $ne: null },
-      }).lean();
+      // ── Expiry alerts ────────────────────────────────────────────────────────
+      if (days >= 0 && days <= 30) {
+        const emailType = days <= 7 ? 'expiry_j7' : days <= 14 ? 'expiry_j14' : 'expiry_j30';
+        const dedupKey = `${String(sub._id)}:${emailType}`;
+        const alreadySent = eventIndex.has(dedupKey);
 
-      for (const sub of subscriptions) {
-        const days = daysUntilCardExpiry(sub.cardExpMonth, sub.cardExpYear, now);
+        if (!alreadySent) {
+          try {
+            const result = await sendExpiryEmail({
+              to: sub.customerEmail,
+              customerName: sub.customerName,
+              cardBrand: sub.cardBrand,
+              cardLast4: sub.cardLast4,
+              daysUntilExpiry: days,
+              type: emailType,
+            });
 
-        // ── Expiry alerts ──────────────────────────────────────────────────────
-        if (days >= 0 && days <= 30) {
-          const emailType = days <= 7 ? 'expiry_j7' : days <= 14 ? 'expiry_j14' : 'expiry_j30';
+            emailCreateOps.push({
+              orgId: sub.orgId,
+              subscriptionId: sub._id,
+              stripeCustomerId: sub.stripeCustomerId,
+              type: emailType,
+              resendMessageId: result?.id ?? null,
+              sentAt: now,
+            });
 
-          // Dedup: one per email type per subscription per calendar month
-          const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-          const alreadySent = await EmailEvent.findOne({
-            subscriptionId: sub._id,
-            type: emailType,
-            sentAt: { $gte: monthStart },
-          }).lean();
-
-          if (!alreadySent) {
-            try {
-              const result = await sendExpiryEmail({
-                to: sub.customerEmail,
-                customerName: sub.customerName,
-                cardBrand: sub.cardBrand,
-                cardLast4: sub.cardLast4,
-                daysUntilExpiry: days,
-                type: emailType,
-              });
-
-              await EmailEvent.create({
-                orgId,
-                subscriptionId: sub._id,
-                stripeCustomerId: sub.stripeCustomerId,
-                type: emailType,
-                resendMessageId: result?.id ?? null,
-                sentAt: now,
-              });
-
-              expiryEmailsSent++;
-            } catch (err) {
-              console.error(`[cron/prevention] expiry email failed sub=${sub.stripeSubscriptionId}:`, err.message);
-            }
+            // Update index to prevent double-send within same cron run
+            eventIndex.set(dedupKey, now);
+            expiryEmailsSent++;
+          } catch (err) {
+            console.error(`[cron/prevention] expiry email failed sub=${sub.stripeSubscriptionId}:`, err.message);
           }
         }
+      }
 
-        // ── Chargeback Shield ──────────────────────────────────────────────────
-        // Customers with recoveryScore < 40 billing within 7 days → pre-debit notice
-        const billingInWindow =
-          sub.currentPeriodEnd &&
-          sub.currentPeriodEnd > now &&
-          sub.currentPeriodEnd <= addDays(now, 7);
+      // ── Chargeback Shield ────────────────────────────────────────────────────
+      const billingInWindow =
+        sub.currentPeriodEnd &&
+        sub.currentPeriodEnd > now &&
+        sub.currentPeriodEnd <= in7Days;
 
-        if (
-          sub.recoveryScore !== null &&
-          sub.recoveryScore < 40 &&
-          billingInWindow
-        ) {
-          // Dedup: one per billing cycle (since currentPeriodStart)
-          const cycleStart = sub.currentPeriodStart ?? new Date(now.getFullYear(), now.getMonth(), 1);
-          const alreadySent = await EmailEvent.findOne({
-            subscriptionId: sub._id,
-            type: 'chargeback_shield',
-            sentAt: { $gte: cycleStart },
-          }).lean();
+      if (sub.recoveryScore !== null && sub.recoveryScore < 40 && billingInWindow) {
+        const cycleStart = sub.currentPeriodStart ?? monthStart;
+        // Chargeback dedup uses cycle start — check if event sent since cycle start
+        const eventsForSub = recentEvents.filter(
+          (ev) =>
+            String(ev.subscriptionId) === String(sub._id) &&
+            ev.type === 'chargeback_shield' &&
+            ev.sentAt >= cycleStart
+        );
+        const alreadySent = eventsForSub.length > 0;
 
-          if (!alreadySent) {
+        if (!alreadySent) {
+          const dedupKey = `${String(sub._id)}:chargeback_shield`;
+          const inMemoryAlreadySent = eventIndex.has(dedupKey);
+
+          if (!inMemoryAlreadySent) {
             try {
               const result = await sendChargebackShieldEmail({
                 to: sub.customerEmail,
@@ -108,8 +140,8 @@ export async function GET(request) {
                 billingDate: sub.currentPeriodEnd,
               });
 
-              await EmailEvent.create({
-                orgId,
+              emailCreateOps.push({
+                orgId: sub.orgId,
                 subscriptionId: sub._id,
                 stripeCustomerId: sub.stripeCustomerId,
                 type: 'chargeback_shield',
@@ -117,6 +149,7 @@ export async function GET(request) {
                 sentAt: now,
               });
 
+              eventIndex.set(dedupKey, now);
               chargebackShieldSent++;
             } catch (err) {
               console.error(`[cron/prevention] chargeback shield failed sub=${sub.stripeSubscriptionId}:`, err.message);
@@ -126,8 +159,13 @@ export async function GET(request) {
       }
     }
 
+    // ── 5. Bulk insert all EmailEvent records in one operation ────────────────
+    if (emailCreateOps.length > 0) {
+      await EmailEvent.insertMany(emailCreateOps, { ordered: false });
+    }
+
     console.log(
-      `[cron/prevention] accounts=${connections.length} expiry=${expiryEmailsSent} chargeback_shield=${chargebackShieldSent}`
+      `[cron/prevention] accounts=${connections.length} subs=${subscriptions.length} expiry=${expiryEmailsSent} chargeback_shield=${chargebackShieldSent}`
     );
 
     return NextResponse.json({
@@ -147,12 +185,7 @@ export async function GET(request) {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/**
- * Returns days until the card expires (end of expiry month).
- * Returns negative if already expired.
- */
 function daysUntilCardExpiry(expMonth, expYear, now) {
-  // new Date(year, expMonth, 0) = last day of expMonth (JS month is 0-indexed, day 0 = prev month's last day)
   const expiry = new Date(expYear, expMonth, 0, 23, 59, 59);
   return Math.floor((expiry - now) / (1000 * 60 * 60 * 24));
 }
