@@ -4,6 +4,7 @@ import connectMongo from '@/libs/mongoose';
 import { classifyDecline } from '@/libs/die';
 import { computeRetryDate } from '@/libs/paydayRetry';
 import { computeRecoveryScore } from '@/libs/recoveryScore';
+import { computeHealthScore } from '@/libs/healthScore';
 import StripeConnection from '@/models/StripeConnection';
 import Subscription from '@/models/Subscription';
 import Invoice from '@/models/Invoice';
@@ -67,12 +68,14 @@ export async function POST(request) {
       // ── invoice.payment_failed ──────────────────────────────────────────────
       case 'invoice.payment_failed': {
         await handleInvoicePaymentFailed(event.data.object, orgId, stripeAccountId);
+        await refreshHealthScore(orgId);
         break;
       }
 
       // ── invoice.payment_succeeded ───────────────────────────────────────────
       case 'invoice.payment_succeeded': {
         await handleInvoicePaymentSucceeded(event.data.object, orgId);
+        await refreshHealthScore(orgId);
         break;
       }
 
@@ -313,4 +316,39 @@ async function stopDunningSequence(invoiceId, reason) {
       stoppedReason: reason,
     }
   );
+}
+
+/**
+ * Recomputes the Revenue Health Score from live DB state and persists it to StripeConnection.
+ * Called after any payment event that changes invoice status.
+ */
+async function refreshHealthScore(orgId) {
+  try {
+    const [openInvoices, activeSubs, totalInvoices, recoveredCount] = await Promise.all([
+      Invoice.find({ orgId, status: 'open' }).select('recoveryScore').lean(),
+      Subscription.find({ orgId, status: 'active' }).select('mrr recoveryScore cardExpMonth cardExpYear').lean(),
+      Invoice.countDocuments({ orgId }),
+      Invoice.countDocuments({ orgId, status: 'recovered' }),
+    ]);
+
+    const { total, dimensions } = computeHealthScore({
+      activeSubs,
+      openInvoices,
+      totalInvoices,
+      recoveredCount,
+      hasConnection: true,
+    });
+
+    await StripeConnection.updateOne(
+      { userId: orgId },
+      {
+        'healthScore.total': total,
+        'healthScore.dimensions': dimensions,
+        'healthScore.computedAt': new Date(),
+      }
+    );
+  } catch (err) {
+    // Non-critical: log but don't fail the webhook response
+    console.error('[refreshHealthScore] Error:', err);
+  }
 }

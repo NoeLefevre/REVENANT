@@ -123,7 +123,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
                       Connected at
                     </span>
                     <span className="text-[13px] text-[#4B5563]">
-                      {new Date(stripeConnection.connectedAt).toLocaleDateString('en-US', {
+                      {new Date(stripeConnection.createdAt).toLocaleDateString('en-US', {
                         month: 'long',
                         day: 'numeric',
                         year: 'numeric',

@@ -4,6 +4,7 @@ import { auth } from '@/libs/auth';
 import connectMongo from '@/libs/mongoose';
 import StripeConnection from '@/models/StripeConnection';
 import User from '@/models/User';
+import DunningSequence from '@/models/DunningSequence';
 
 export async function POST() {
   const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -32,6 +33,12 @@ export async function POST() {
       // Log but don't fail — we still clean up locally even if Stripe revocation fails
       console.error('[stripe-connect/disconnect] Stripe revoke error:', revokeError.message);
     }
+
+    // Stop all active dunning sequences so crons don't fire on orphaned invoices
+    await DunningSequence.updateMany(
+      { orgId: session.user.id, status: 'active' },
+      { status: 'stopped', stoppedAt: new Date(), stoppedReason: 'disconnected' }
+    );
 
     // Remove StripeConnection document
     await StripeConnection.deleteOne({ userId: session.user.id });

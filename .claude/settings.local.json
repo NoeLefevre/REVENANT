@@ -9,7 +9,8 @@
       "Bash(npm run:*)",
       "Bash(echo \"exit: $?\")",
       "Bash(ls:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(grep -E \"REVENANT|\\\\.md$\")"
     ]
   }
 }
