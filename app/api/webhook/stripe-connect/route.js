@@ -38,7 +38,9 @@ export async function POST(request) {
       process.env.STRIPE_CONNECT_WEBHOOK_SECRET
     );
   } catch (err) {
-    console.error('[webhook/stripe-connect] Signature verification failed:', err.message);
+    console.error('[REVENANT:WEBHOOK] ❌ Signature verification failed', {
+      error: err.message,
+    });
     return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
   }
 
@@ -46,9 +48,19 @@ export async function POST(request) {
   const stripeAccountId = event.account;
 
   if (!stripeAccountId) {
-    console.error('[webhook/stripe-connect] Missing event.account — not a Connect event');
+    console.error('[REVENANT:WEBHOOK] ❌ Missing event.account — not a Connect event', {
+      eventId: event.id,
+      type: event.type,
+    });
     return NextResponse.json({ error: 'Not a Connect event' }, { status: 400 });
   }
+
+  console.log('[REVENANT:WEBHOOK] Event received', {
+    type: event.type,
+    id: event.id,
+    account: stripeAccountId,
+    timestamp: new Date().toISOString(),
+  });
 
   try {
     await connectMongo();
@@ -57,14 +69,14 @@ export async function POST(request) {
     const connection = await StripeConnection.findOne({ stripeAccountId });
 
     if (!connection) {
-      // Connected account exists in Stripe but not in our DB (e.g. disconnected)
-      console.warn('[webhook/stripe-connect] Unknown stripeAccountId:', stripeAccountId);
-      return NextResponse.json({ received: true }); // acknowledge to Stripe
+      console.warn('[REVENANT:WEBHOOK] ⚠ Unknown stripeAccountId — no matching StripeConnection', {
+        stripeAccountId,
+        eventId: event.id,
+      });
+      return NextResponse.json({ received: true });
     }
 
     const orgId = connection.userId;
-
-    console.log(`[webhook/stripe-connect] event=${event.type} account=${stripeAccountId}`);
 
     switch (event.type) {
 
@@ -85,25 +97,40 @@ export async function POST(request) {
       // ── customer.subscription.updated ──────────────────────────────────────
       case 'customer.subscription.updated': {
         await handleSubscriptionUpdated(event.data.object, orgId, stripeAccountId);
-        await refreshHealthScore(orgId); // expiryRisk depends on subscription card data
+        await refreshHealthScore(orgId);
         break;
       }
 
       // ── payment_method.updated ──────────────────────────────────────────────
       case 'payment_method.updated': {
         await handlePaymentMethodUpdated(event.data.object, orgId);
-        await refreshHealthScore(orgId); // card expiry metadata changed — refresh expiryRisk
+        await refreshHealthScore(orgId);
         break;
       }
 
       default:
-        console.log(`[webhook/stripe-connect] unhandled event type: ${event.type}`);
+        console.log('[REVENANT:WEBHOOK] ⚠ No handler for event', {
+          type: event.type,
+          id: event.id,
+        });
         break;
     }
 
+    console.log('[REVENANT:WEBHOOK] Event processed', {
+      type: event.type,
+      id: event.id,
+      result: 'success',
+    });
+
     return NextResponse.json({ received: true });
   } catch (error) {
-    console.error('[webhook/stripe-connect]', error);
+    console.error('[REVENANT:WEBHOOK] ❌ Error', {
+      type: event.type,
+      id: event.id,
+      account: stripeAccountId,
+      error: error.message,
+      stack: error.stack,
+    });
     return NextResponse.json(
       { error: error.message || 'Internal server error' },
       { status: error.statusCode || 500 }
@@ -351,6 +378,7 @@ async function refreshHealthScore(orgId) {
       totalInvoices,
       recoveredCount,
       hasConnection: true,
+      userId: orgId?.toString(),
     });
 
     await StripeConnection.updateOne(
