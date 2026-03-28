@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { auth } from '@/libs/auth';
-import { cookies } from 'next/headers';
 import connectMongo from '@/libs/mongoose';
 import { encrypt } from '@/libs/encryption';
 import StripeConnection from '@/models/StripeConnection';
@@ -10,18 +9,12 @@ import User from '@/models/User';
 export async function GET(request) {
   const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
   try {
-    const session = await auth();
-
-    if (!session?.user?.id) {
-      return NextResponse.redirect(`${process.env.NEXT_PUBLIC_APP_URL}/signin`);
-    }
-
     const { searchParams } = new URL(request.url);
     const code = searchParams.get('code');
     const state = searchParams.get('state');
     const error = searchParams.get('error');
 
-    // Handle user-denied OAuth
+    // Handle user-denied OAuth early — before any auth check
     if (error) {
       console.error('[stripe-connect/callback] OAuth error:', error);
       return NextResponse.redirect(
@@ -29,13 +22,26 @@ export async function GET(request) {
       );
     }
 
-    // CSRF check: state must match the random token stored in the httpOnly cookie
-    const cookieStore = await cookies();
-    const savedState = cookieStore.get('stripe_oauth_state')?.value;
+    // CSRF check: read cookie directly from the request object (not `cookies()` from
+    // next/headers) to avoid interference from NextAuth v5 calling cookies() internally
+    // during session rotation, which can cause next/headers cookie store to return stale
+    // data after auth() has already consumed it.
+    const savedState = request.cookies.get('stripe_oauth_state')?.value;
 
     if (!savedState || !state || state !== savedState) {
-      console.error('[stripe-connect/callback] CSRF state mismatch');
+      console.error('[stripe-connect/callback] CSRF state mismatch', {
+        hasSavedState: !!savedState,
+        hasState: !!state,
+        match: savedState === state,
+      });
       return NextResponse.json({ error: 'Invalid state parameter' }, { status: 400 });
+    }
+
+    // Auth check after CSRF — session must exist to complete the connection
+    const session = await auth();
+
+    if (!session?.user?.id) {
+      return NextResponse.redirect(`${process.env.NEXT_PUBLIC_APP_URL}/signin`);
     }
 
     if (!code) {

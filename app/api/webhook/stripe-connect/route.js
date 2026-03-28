@@ -5,6 +5,7 @@ import { classifyDecline } from '@/libs/die';
 import { computeRetryDate } from '@/libs/paydayRetry';
 import { computeRecoveryScore } from '@/libs/recoveryScore';
 import { computeHealthScore } from '@/libs/healthScore';
+import { computeMRR } from '@/libs/stripeConnect';
 import StripeConnection from '@/models/StripeConnection';
 import Subscription from '@/models/Subscription';
 import Invoice from '@/models/Invoice';
@@ -63,6 +64,8 @@ export async function POST(request) {
 
     const orgId = connection.userId;
 
+    console.log(`[webhook/stripe-connect] event=${event.type} account=${stripeAccountId}`);
+
     switch (event.type) {
 
       // ── invoice.payment_failed ──────────────────────────────────────────────
@@ -82,17 +85,19 @@ export async function POST(request) {
       // ── customer.subscription.updated ──────────────────────────────────────
       case 'customer.subscription.updated': {
         await handleSubscriptionUpdated(event.data.object, orgId, stripeAccountId);
+        await refreshHealthScore(orgId); // expiryRisk depends on subscription card data
         break;
       }
 
       // ── payment_method.updated ──────────────────────────────────────────────
       case 'payment_method.updated': {
         await handlePaymentMethodUpdated(event.data.object, orgId);
+        await refreshHealthScore(orgId); // card expiry metadata changed — refresh expiryRisk
         break;
       }
 
       default:
-        // Acknowledge unhandled events silently
+        console.log(`[webhook/stripe-connect] unhandled event type: ${event.type}`);
         break;
     }
 
@@ -144,7 +149,15 @@ async function handleInvoicePaymentFailed(inv, orgId, stripeAccountId) {
     dieCategory,
   });
 
-  // ── 3. Upsert Invoice ─────────────────────────────────────────────────────
+  // ── 3. Propagate Recovery Score to Subscription (feeds customerRisk dimension) ─
+  if (recoveryScore !== null && inv.subscription) {
+    await Subscription.findOneAndUpdate(
+      { stripeSubscriptionId: inv.subscription, orgId },
+      { recoveryScore, recoveryScoreUpdatedAt: new Date() }
+    );
+  }
+
+  // ── 4. Upsert Invoice ─────────────────────────────────────────────────────
   const invoice = await Invoice.findOneAndUpdate(
     { stripeInvoiceId: inv.id },
     {
@@ -169,7 +182,7 @@ async function handleInvoicePaymentFailed(inv, orgId, stripeAccountId) {
     { upsert: true, new: true }
   );
 
-  // ── 4. Start dunning sequence (not for HARD_PERMANENT) ────────────────────
+  // ── 5. Start dunning sequence (not for HARD_PERMANENT) ────────────────────
   if (dieCategory !== 'HARD_PERMANENT') {
     await startDunningSequence({ invoice, orgId });
   }
@@ -201,6 +214,7 @@ async function handleSubscriptionUpdated(sub, orgId, stripeAccountId) {
       stripeSubscriptionId: sub.id,
       stripeCustomerId: typeof sub.customer === 'string' ? sub.customer : sub.customer?.id,
       status: sub.status,
+      mrr: computeMRR(sub),
       planId: sub.items?.data?.[0]?.price?.id ?? null,
       currentPeriodStart: sub.current_period_start
         ? new Date(sub.current_period_start * 1000)

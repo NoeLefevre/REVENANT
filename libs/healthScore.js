@@ -47,8 +47,10 @@ export function computeHealthScore({
       : 100;
 
   // Recovery Rate: recovered / (open + recovered)
+  // Default to 100 when there is no failure history — a merchant with zero failures
+  // has a perfect recovery rate, not a zero one.
   const denominator = openInvoices.length + recoveredCount;
-  const recoveryRate = denominator > 0 ? Math.round((recoveredCount / denominator) * 100) : 0;
+  const recoveryRate = denominator > 0 ? Math.round((recoveredCount / denominator) * 100) : 100;
 
   // Customer Risk: average recovery score across active subs (default 50 if unknown)
   const customerRisk =

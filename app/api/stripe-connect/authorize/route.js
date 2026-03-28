@@ -2,6 +2,10 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/libs/auth';
 import crypto from 'crypto';
 
+// Force dynamic — this route generates a random CSRF token per request,
+// must never be statically cached.
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
     const session = await auth();

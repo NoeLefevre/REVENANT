@@ -42,7 +42,7 @@ async function stripeListWithRetry(fn, maxRetries = 3) {
 /**
  * Computes the Monthly Recurring Revenue in cents from a Stripe subscription object.
  */
-function computeMRR(sub) {
+export function computeMRR(sub) {
   if (!sub.items?.data?.length) return 0;
 
   return sub.items.data.reduce((total, item) => {
