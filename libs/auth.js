@@ -31,6 +31,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           GoogleProvider({
             clientId: process.env.GOOGLE_ID,
             clientSecret: process.env.GOOGLE_SECRET,
+            // Allow linking a Google sign-in to an existing account created via Magic Link.
+            // Safe because Google verifies email ownership before issuing the token.
+            allowDangerousEmailAccountLinking: true,
             async profile(profile) {
               return {
                 id: profile.sub,

@@ -144,62 +144,79 @@ export async function syncStripeData(userId, stripeAccountId, encryptedAccessTok
     }
   }
 
-  // ── 2. Sync last 90 days of failed (open) invoices ──────────────────────────
+  // ── 2. Sync invoices from the last 90 days ───────────────────────────────────
+  // Pulls two passes:
+  //   a) status=open  → currently failing, need dunning action
+  //   b) status=paid  → recovered invoices (attempt_count > 1 = had at least one failure)
+  //      Gives recoveryRate an accurate historical baseline from day 1.
   const since = Math.floor(Date.now() / 1000) - 90 * 86400;
 
-  let invoiceHasMore = true;
-  let invoiceStartingAfter = undefined;
+  async function syncInvoicePage(status) {
+    let hasMore = true;
+    let startingAfter = undefined;
+    let count = 0;
 
-  while (invoiceHasMore) {
-    const invoices = await stripeListWithRetry(() =>
-      clientStripe.invoices.list({
-        limit: 100,
-        status: 'open',
-        created: { gte: since },
-        expand: ['data.customer'],
-        ...(invoiceStartingAfter && { starting_after: invoiceStartingAfter }),
-      })
-    );
-
-    for (const inv of invoices.data) {
-      if (!inv.last_payment_error) continue;
-
-      const failureCode = inv.last_payment_error?.code ?? null;
-      const dieCategory = classifyDecline(failureCode);
-
-      const customer = typeof inv.customer === 'string' ? null : inv.customer;
-
-      const failedAt = inv.status_transitions?.past_due_at
-        ? new Date(inv.status_transitions.past_due_at * 1000)
-        : new Date();
-
-      await Invoice.findOneAndUpdate(
-        { stripeInvoiceId: inv.id },
-        {
-          orgId: userId,
-          stripeAccountId,
-          stripeInvoiceId: inv.id,
-          stripeSubscriptionId: inv.subscription ?? null,
-          stripeCustomerId: typeof inv.customer === 'string' ? inv.customer : inv.customer?.id,
-          customerEmail: customer?.email ?? inv.customer_email ?? null,
-          customerName: customer?.name ?? inv.customer_name ?? null,
-          amount: inv.amount_due,
-          currency: inv.currency ?? 'usd',
-          status: 'open',
-          dieCategory,
-          failureCode,
-          failureMessage: inv.last_payment_error?.message ?? null,
-          failedAt,
-        },
-        { upsert: true, new: true }
+    while (hasMore) {
+      const page = await stripeListWithRetry(() =>
+        clientStripe.invoices.list({
+          limit: 100,
+          status,
+          created: { gte: since },
+          expand: ['data.customer'],
+          ...(startingAfter && { starting_after: startingAfter }),
+        })
       );
+
+      for (const inv of page.data) {
+        // For paid invoices: only import those with more than 1 attempt
+        // (attempt_count > 1 means at least one payment failed before recovery)
+        if (status === 'paid' && (inv.attempt_count ?? 0) <= 1) continue;
+
+        const failureCode = inv.last_payment_error?.code ?? null;
+        const dieCategory = classifyDecline(failureCode);
+        const customer = typeof inv.customer === 'string' ? null : inv.customer;
+
+        const failedAt = inv.status_transitions?.past_due_at
+          ? new Date(inv.status_transitions.past_due_at * 1000)
+          : null;
+
+        const recoveredAt = status === 'paid' && inv.status_transitions?.paid_at
+          ? new Date(inv.status_transitions.paid_at * 1000)
+          : null;
+
+        await Invoice.findOneAndUpdate(
+          { stripeInvoiceId: inv.id },
+          {
+            orgId: userId,
+            stripeAccountId,
+            stripeInvoiceId: inv.id,
+            stripeSubscriptionId: inv.subscription ?? null,
+            stripeCustomerId: typeof inv.customer === 'string' ? inv.customer : inv.customer?.id,
+            customerEmail: customer?.email ?? inv.customer_email ?? null,
+            customerName: customer?.name ?? inv.customer_name ?? null,
+            amount: inv.amount_due,
+            currency: inv.currency ?? 'usd',
+            status: status === 'paid' ? 'recovered' : 'open',
+            dieCategory,
+            failureCode,
+            failureMessage: inv.last_payment_error?.message ?? null,
+            ...(failedAt && { failedAt }),
+            ...(recoveredAt && { recoveredAt }),
+          },
+          { upsert: true, new: true }
+        );
+        count++;
+      }
+
+      hasMore = page.has_more;
+      if (hasMore) startingAfter = page.data[page.data.length - 1].id;
     }
 
-    invoiceHasMore = invoices.has_more;
-    if (invoiceHasMore) {
-      invoiceStartingAfter = invoices.data[invoices.data.length - 1].id;
-    }
+    console.log(`[syncStripeData] invoices status=${status} written=${count}`);
   }
+
+  await syncInvoicePage('open');
+  await syncInvoicePage('paid');
 
   // ── 3. Compute Revenue Health Score ──────────────────────────────────────────
   const [activeSubs, openInvoices, totalInvoices, recoveredCount] = await Promise.all([

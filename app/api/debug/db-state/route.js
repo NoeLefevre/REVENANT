@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { auth } from '@/libs/auth';
 import connectMongo from '@/libs/mongoose';
 import StripeConnection from '@/models/StripeConnection';
 import Subscription from '@/models/Subscription';
@@ -8,81 +7,54 @@ import DunningSequence from '@/models/DunningSequence';
 
 /**
  * GET /api/debug/db-state
- *
- * Returns a snapshot of the authenticated user's REVENANT data for debugging.
- * Protected by session auth — only shows data for the currently logged-in user.
+ * Protected by x-internal-secret header.
  * Remove this route once debugging is complete.
  */
-export async function GET() {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+export async function GET(request) {
+  const secret = request.headers.get('x-internal-secret');
+  if (!process.env.INTERNAL_SECRET || secret !== process.env.INTERNAL_SECRET) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
-
-  const orgId = session.user.id;
 
   await connectMongo();
 
-  const [connection, invoiceCounts, invoicesByStatus, invoicesByCategory, subCounts, subsByStatus, recentInvoices, activeDunning] = await Promise.all([
-    // StripeConnection
-    StripeConnection.findOne({ userId: orgId })
-      .select('stripeAccountId syncStatus lastSyncAt healthScore livemode')
-      .lean(),
+  // Accept ?userId= to target a specific org, otherwise return aggregate counts
+  const { searchParams } = new URL(request.url);
+  const userId = searchParams.get('userId');
 
-    // Invoice totals
-    Invoice.countDocuments({ orgId }),
-    Invoice.aggregate([
-      { $match: { orgId: orgId } },
-      { $group: { _id: '$status', count: { $sum: 1 } } },
-    ]),
-    Invoice.aggregate([
-      { $match: { orgId: orgId, dieCategory: { $ne: null } } },
-      { $group: { _id: '$dieCategory', count: { $sum: 1 } } },
-    ]),
+  const orgFilter = userId ? { orgId: userId } : {};
+  const connFilter = userId ? { userId } : {};
 
-    // Subscription totals
-    Subscription.countDocuments({ orgId }),
-    Subscription.aggregate([
-      { $match: { orgId: orgId } },
-      { $group: { _id: '$status', count: { $sum: 1 } } },
-    ]),
-
-    // Last 5 invoices
-    Invoice.find({ orgId })
-      .sort({ createdAt: -1 })
-      .limit(5)
-      .select('stripeInvoiceId status dieCategory failureCode amount currency failedAt recoveredAt recoveryScore')
-      .lean(),
-
-    // Active dunning sequences
-    DunningSequence.find({ orgId, status: 'active' })
-      .limit(5)
-      .select('category currentStep status steps createdAt')
-      .lean(),
-  ]);
+  const [connection, invoiceCount, subCount, dunningCount, sampleInvoice, sampleSub] =
+    await Promise.all([
+      StripeConnection.findOne(connFilter)
+        .select('userId stripeAccountId syncStatus lastSyncAt syncError healthScore livemode')
+        .lean(),
+      Invoice.countDocuments(orgFilter),
+      Subscription.countDocuments(orgFilter),
+      DunningSequence.countDocuments(orgFilter),
+      Invoice.findOne(orgFilter).sort({ createdAt: -1 }).lean(),
+      Subscription.findOne(orgFilter).sort({ createdAt: -1 }).lean(),
+    ]);
 
   return NextResponse.json({
-    connection: connection
+    stripeConnection: connection
       ? {
+          userId: connection.userId,
           stripeAccountId: connection.stripeAccountId,
           syncStatus: connection.syncStatus,
-          lastSyncAt: connection.lastSyncAt,
-          livemode: connection.livemode,
+          lastSyncAt: connection.lastSyncAt ?? null,
+          syncError: connection.syncError ?? null,
           healthScore: connection.healthScore ?? null,
+          livemode: connection.livemode,
         }
       : null,
-    invoices: {
-      total: invoiceCounts,
-      byStatus: Object.fromEntries(invoicesByStatus.map((r) => [r._id, r.count])),
-      byDieCategory: Object.fromEntries(invoicesByCategory.map((r) => [r._id, r.count])),
-      recent: recentInvoices,
+    counts: {
+      invoices: invoiceCount,
+      subscriptions: subCount,
+      dunningSequences: dunningCount,
     },
-    subscriptions: {
-      total: subCounts,
-      byStatus: Object.fromEntries(subsByStatus.map((r) => [r._id, r.count])),
-    },
-    dunning: {
-      activeSequences: activeDunning,
-    },
+    sampleInvoice: sampleInvoice ?? null,
+    sampleSubscription: sampleSub ?? null,
   });
 }
