@@ -85,7 +85,7 @@ const config = {
     main: "#6C63FF",
   },
   auth: {
-    loginUrl: "/signin",
+    loginUrl: "/api/auth/signin",
     callbackUrl: "/overview",
   },
 };

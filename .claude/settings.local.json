@@ -10,8 +10,7 @@
       "Bash(echo \"exit: $?\")",
       "Bash(ls:*)",
       "Bash(cat:*)",
-      "Bash(grep -E \"REVENANT|\\\\.md$\")",
-      "Bash(find 'C:/Users/lefev/Documents/Projet à 1 million/ship-fast-main/app' -name *.js -path *sign*)"
+      "Bash(grep -E \"REVENANT|\\\\.md$\")"
     ]
   }
 }

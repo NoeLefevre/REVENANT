@@ -11,10 +11,6 @@ import Subscription from '@/models/Subscription';
 import Invoice from '@/models/Invoice';
 import DunningSequence from '@/models/DunningSequence';
 
-// Required: prevents Next.js from caching or pre-processing this route.
-// Stripe signature verification requires the raw, unmodified request body.
-export const dynamic = 'force-dynamic';
-
 // Dunning email delays in days, indexed by DIE category
 const SEQUENCE_DELAYS_DAYS = {
   SOFT_TEMPORARY: [0, 3, 7, 14, 21], // 5 emails
@@ -42,15 +38,8 @@ export async function POST(request) {
       process.env.STRIPE_CONNECT_WEBHOOK_SECRET
     );
   } catch (err) {
-    // Log enough context to diagnose wrong-secret vs body-corruption without
-    // leaking the full secret value.
     console.error('[REVENANT:WEBHOOK] ❌ Signature verification failed', {
       error: err.message,
-      signatureHeader: sig ? sig.substring(0, 24) + '...' : 'MISSING',
-      secretDefined: !!process.env.STRIPE_CONNECT_WEBHOOK_SECRET,
-      // First 12 chars — enough to tell CLI secret (whsec_...) from prod secret
-      secretPrefix: process.env.STRIPE_CONNECT_WEBHOOK_SECRET?.substring(0, 12) ?? 'undefined',
-      bodyLength: body?.length ?? 0,
     });
     return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
   }
@@ -108,35 +97,6 @@ export async function POST(request) {
       // ── customer.subscription.updated ──────────────────────────────────────
       case 'customer.subscription.updated': {
         await handleSubscriptionUpdated(event.data.object, orgId, stripeAccountId);
-        await refreshHealthScore(orgId);
-        break;
-      }
-
-      // ── invoice.created ────────────────────────────────────────────────────────
-      case 'invoice.created': {
-        const inv = event.data.object;
-        await Invoice.findOneAndUpdate(
-          { stripeInvoiceId: inv.id },
-          {
-            orgId,
-            stripeAccountId,
-            stripeInvoiceId: inv.id,
-            stripeCustomerId: inv.customer,
-            stripeSubscriptionId: inv.subscription ?? null,
-            amount: inv.amount_due,
-            currency: inv.currency ?? 'usd',
-            status: inv.status,
-            customerEmail: inv.customer_email ?? null,
-            customerName: inv.customer_name ?? null,
-          },
-          { upsert: true, new: true }
-        );
-        break;
-      }
-
-      // ── customer.subscription.deleted ──────────────────────────────────────────
-      case 'customer.subscription.deleted': {
-        await handleSubscriptionDeleted(event.data.object, orgId);
         await refreshHealthScore(orgId);
         break;
       }
@@ -295,31 +255,6 @@ async function handleSubscriptionUpdated(sub, orgId, stripeAccountId) {
   );
 }
 
-async function handleSubscriptionDeleted(sub, orgId) {
-  // Mark subscription as canceled in DB
-  await Subscription.findOneAndUpdate(
-    { stripeSubscriptionId: sub.id, orgId },
-    { status: 'canceled' }
-  );
-
-  // Stop all active dunning sequences tied to invoices of this subscription
-  const invoices = await Invoice.find({ stripeSubscriptionId: sub.id, orgId }).select('_id').lean();
-  const invoiceIds = invoices.map((i) => i._id);
-
-  if (invoiceIds.length > 0) {
-    await DunningSequence.updateMany(
-      { invoiceId: { $in: invoiceIds }, status: 'active' },
-      { status: 'stopped', stoppedAt: new Date(), stoppedReason: 'subscription_deleted' }
-    );
-  }
-
-  console.log('[REVENANT:WEBHOOK] Subscription deleted — canceled in DB', {
-    stripeSubscriptionId: sub.id,
-    orgId,
-    dunningSequencesStopped: invoiceIds.length,
-  });
-}
-
 async function handlePaymentMethodUpdated(pm, orgId) {
   // Update card metadata on all subscriptions using this payment method
   await Subscription.updateMany(
@@ -437,12 +372,6 @@ async function refreshHealthScore(orgId) {
       Invoice.countDocuments({ orgId, status: 'recovered' }),
     ]);
 
-    const hasData = activeSubs.length > 0 || totalInvoices > 0;
-    if (!hasData) {
-      console.warn('[refreshHealthScore] ⚠ No data in DB yet — score not updated. Run sync first.');
-      return;
-    }
-
     const { total, dimensions } = computeHealthScore({
       activeSubs,
       openInvoices,
@@ -460,16 +389,6 @@ async function refreshHealthScore(orgId) {
         'healthScore.computedAt': new Date(),
       }
     );
-
-    console.log('[refreshHealthScore] ✅ Score updated', {
-      orgId,
-      total,
-      dimensions,
-      activeSubs: activeSubs.length,
-      openInvoices: openInvoices.length,
-      totalInvoices,
-      recoveredCount,
-    });
   } catch (err) {
     // Non-critical: log but don't fail the webhook response
     console.error('[refreshHealthScore] Error:', err);
