@@ -20,7 +20,6 @@ async function seed() {
 
   async function createCustomer(email, name, pmToken, trialDays = null) {
     const customer = await stripe.customers.create({ email, name })
-
     let pm
     try {
       pm = await stripe.paymentMethods.attach(pmToken, { customer: customer.id })
