@@ -67,6 +67,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     maxAge: 30 * 24 * 60 * 60, // 30 days
   },
 
+  pages: {
+    signIn: "/signin",
+  },
+
   theme: {
     brandColor: config.colors.main,
     logo: `https://${config.domainName}/logoAndName.png`,

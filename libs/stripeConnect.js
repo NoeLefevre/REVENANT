@@ -217,34 +217,140 @@ export async function syncStripeData(userId, stripeAccountId, encryptedAccessTok
   }
 
   // ── 2. Sync invoices from the last 90 days ───────────────────────────────────
-  // Two passes:
-  //   a) status=open  → currently failing, need dunning action
-  //   b) status=paid  → recovered invoices (attempt_count > 1 = had at least one failure)
+  // Single pass, no status filter — captures open, paid, uncollectible, void.
+  // Mapping to DB status:
+  //   open          → 'open'          (active failure, needs dunning)
+  //   paid (retry>1)→ 'recovered'     (had a failure, then recovered)
+  //   paid (retry=1)→ skip            (paid first try, not a failure case)
+  //   uncollectible → 'uncollectible' (written off)
+  //   void          → 'void'          (cancelled, no action needed)
+  //   draft         → skip            (not finalized)
   const since = Math.floor(Date.now() / 1000) - 90 * 86400;
   let totalInvoicesFetched = 0;
   let totalInvoicesWritten = 0;
   let totalInvoicesSkipped = 0;
 
-  async function syncInvoicePage(stripeStatus) {
-    let invoiceHasMore = true;
-    let invoiceStartingAfter = undefined;
+  let invoiceHasMore = true;
+  let invoiceStartingAfter = undefined;
 
-    while (invoiceHasMore) {
-      let page;
+  while (invoiceHasMore) {
+    let page;
+    try {
+      page = await stripeListWithRetry(() =>
+        clientStripe.invoices.list({
+          limit: 100,
+          created: { gte: since },
+          expand: ['data.customer'],
+          ...(invoiceStartingAfter && { starting_after: invoiceStartingAfter }),
+        })
+      );
+    } catch (err) {
+      console.error('[REVENANT:SYNC] ❌ Error', {
+        step: 'fetch_invoices',
+        error: err.message,
+        stack: err.stack,
+        stripeAccountId,
+      });
+      throw err;
+    }
+
+    totalInvoicesFetched += page.data.length;
+
+    console.log('[REVENANT:SYNC] Invoices fetched from Stripe', {
+      page: invoiceStartingAfter ?? 'first',
+      count: page.data.length,
+      ids: page.data.map((i) => i.id),
+      byStatus: page.data.reduce((acc, i) => {
+        acc[i.status] = (acc[i.status] ?? 0) + 1;
+        return acc;
+      }, {}),
+      withPaymentError: page.data.filter((i) => !!i.last_payment_error).length,
+      withoutPaymentError: page.data.filter((i) => !i.last_payment_error).length,
+    });
+
+    for (const inv of page.data) {
+      // Determine DB status and whether to write this invoice
+      let dbStatus;
+      let skipReason = null;
+
+      if (inv.status === 'open') {
+        dbStatus = 'open';
+      } else if (inv.status === 'paid') {
+        if ((inv.attempt_count ?? 0) > 1) {
+          dbStatus = 'recovered';
+        } else {
+          skipReason = 'paid_first_attempt'; // no failure, no value tracking it
+        }
+      } else if (inv.status === 'uncollectible') {
+        dbStatus = 'uncollectible';
+      } else if (inv.status === 'void') {
+        dbStatus = 'void';
+      } else {
+        skipReason = `unsupported_status:${inv.status}`; // e.g. draft
+      }
+
+      console.log('[REVENANT:SYNC] Invoice evaluated', {
+        stripeInvoiceId: inv.id,
+        stripeStatus: inv.status,
+        amount: inv.amount_due,
+        attemptCount: inv.attempt_count ?? 0,
+        hasPaymentError: !!inv.last_payment_error,
+        errorCode: inv.last_payment_error?.code ?? null,
+        willBeWrittenToDB: !skipReason,
+        dbStatus: skipReason ? null : dbStatus,
+        skipReason: skipReason ?? undefined,
+      });
+
+      if (skipReason) {
+        totalInvoicesSkipped++;
+        console.log('[REVENANT:SYNC] ⚠ Invoice SKIPPED', {
+          stripeInvoiceId: inv.id,
+          stripeStatus: inv.status,
+          reason: skipReason,
+        });
+        continue;
+      }
+
+      const failureCode = inv.last_payment_error?.code ?? null;
+      const dieCategory = classifyDecline(failureCode);
+      const customer = typeof inv.customer === 'string' ? null : inv.customer;
+
+      const failedAt = inv.status_transitions?.past_due_at
+        ? new Date(inv.status_transitions.past_due_at * 1000)
+        : null;
+
+      const recoveredAt =
+        dbStatus === 'recovered' && inv.status_transitions?.paid_at
+          ? new Date(inv.status_transitions.paid_at * 1000)
+          : null;
+
       try {
-        page = await stripeListWithRetry(() =>
-          clientStripe.invoices.list({
-            limit: 100,
-            status: stripeStatus,
-            created: { gte: since },
-            expand: ['data.customer'],
-            ...(invoiceStartingAfter && { starting_after: invoiceStartingAfter }),
-          })
+        await Invoice.findOneAndUpdate(
+          { stripeInvoiceId: inv.id },
+          {
+            orgId: userId,
+            stripeAccountId,
+            stripeInvoiceId: inv.id,
+            stripeSubscriptionId: inv.subscription ?? null,
+            stripeCustomerId:
+              typeof inv.customer === 'string' ? inv.customer : inv.customer?.id,
+            customerEmail: customer?.email ?? inv.customer_email ?? null,
+            customerName: customer?.name ?? inv.customer_name ?? null,
+            amount: inv.amount_due,
+            currency: inv.currency ?? 'usd',
+            status: dbStatus,
+            dieCategory,
+            failureCode,
+            failureMessage: inv.last_payment_error?.message ?? null,
+            ...(failedAt && { failedAt }),
+            ...(recoveredAt && { recoveredAt }),
+          },
+          { upsert: true, new: true }
         );
       } catch (err) {
         console.error('[REVENANT:SYNC] ❌ Error', {
-          step: 'fetch_invoices',
-          stripeStatus,
+          step: 'upsert_invoice',
+          stripeInvoiceId: inv.id,
           error: err.message,
           stack: err.stack,
           stripeAccountId,
@@ -252,111 +358,21 @@ export async function syncStripeData(userId, stripeAccountId, encryptedAccessTok
         throw err;
       }
 
-      totalInvoicesFetched += page.data.length;
-
-      console.log('[REVENANT:SYNC] Invoices fetched from Stripe', {
-        stripeStatus,
-        page: invoiceStartingAfter ?? 'first',
-        count: page.data.length,
-        ids: page.data.map((i) => i.id),
-        withPaymentError: page.data.filter((i) => !!i.last_payment_error).length,
-        withoutPaymentError: page.data.filter((i) => !i.last_payment_error).length,
+      totalInvoicesWritten++;
+      console.log('[REVENANT:SYNC] Invoice upserted', {
+        stripeInvoiceId: inv.id,
+        dbStatus,
+        dieCategory,
+        failureCode,
+        amount: inv.amount_due,
+        failedAt: failedAt?.toISOString() ?? null,
+        recoveredAt: recoveredAt?.toISOString() ?? null,
       });
-
-      for (const inv of page.data) {
-        // For paid invoices: only import those that had at least one prior failure
-        const skipReason =
-          stripeStatus === 'paid' && (inv.attempt_count ?? 0) <= 1
-            ? 'paid_first_attempt'
-            : null;
-
-        console.log('[REVENANT:SYNC] Invoice evaluated', {
-          stripeInvoiceId: inv.id,
-          stripeStatus: inv.status,
-          amount: inv.amount_due,
-          attemptCount: inv.attempt_count ?? 0,
-          hasPaymentError: !!inv.last_payment_error,
-          errorCode: inv.last_payment_error?.code ?? null,
-          willBeWrittenToDB: !skipReason,
-          skipReason: skipReason ?? undefined,
-        });
-
-        if (skipReason) {
-          totalInvoicesSkipped++;
-          console.log('[REVENANT:SYNC] ⚠ Invoice SKIPPED', {
-            stripeInvoiceId: inv.id,
-            stripeStatus: inv.status,
-            reason: skipReason,
-          });
-          continue;
-        }
-
-        const failureCode = inv.last_payment_error?.code ?? null;
-        const dieCategory = classifyDecline(failureCode);
-        const customer = typeof inv.customer === 'string' ? null : inv.customer;
-
-        const failedAt = inv.status_transitions?.past_due_at
-          ? new Date(inv.status_transitions.past_due_at * 1000)
-          : null;
-
-        const recoveredAt =
-          stripeStatus === 'paid' && inv.status_transitions?.paid_at
-            ? new Date(inv.status_transitions.paid_at * 1000)
-            : null;
-
-        try {
-          await Invoice.findOneAndUpdate(
-            { stripeInvoiceId: inv.id },
-            {
-              orgId: userId,
-              stripeAccountId,
-              stripeInvoiceId: inv.id,
-              stripeSubscriptionId: inv.subscription ?? null,
-              stripeCustomerId:
-                typeof inv.customer === 'string' ? inv.customer : inv.customer?.id,
-              customerEmail: customer?.email ?? inv.customer_email ?? null,
-              customerName: customer?.name ?? inv.customer_name ?? null,
-              amount: inv.amount_due,
-              currency: inv.currency ?? 'usd',
-              status: stripeStatus === 'paid' ? 'recovered' : 'open',
-              dieCategory,
-              failureCode,
-              failureMessage: inv.last_payment_error?.message ?? null,
-              ...(failedAt && { failedAt }),
-              ...(recoveredAt && { recoveredAt }),
-            },
-            { upsert: true, new: true }
-          );
-        } catch (err) {
-          console.error('[REVENANT:SYNC] ❌ Error', {
-            step: 'upsert_invoice',
-            stripeInvoiceId: inv.id,
-            error: err.message,
-            stack: err.stack,
-            stripeAccountId,
-          });
-          throw err;
-        }
-
-        totalInvoicesWritten++;
-        console.log('[REVENANT:SYNC] Invoice upserted', {
-          stripeInvoiceId: inv.id,
-          dbStatus: stripeStatus === 'paid' ? 'recovered' : 'open',
-          dieCategory,
-          failureCode,
-          amount: inv.amount_due,
-          failedAt: failedAt?.toISOString() ?? null,
-          recoveredAt: recoveredAt?.toISOString() ?? null,
-        });
-      }
-
-      invoiceHasMore = page.has_more;
-      if (invoiceHasMore) invoiceStartingAfter = page.data[page.data.length - 1].id;
     }
-  }
 
-  await syncInvoicePage('open');
-  await syncInvoicePage('paid');
+    invoiceHasMore = page.has_more;
+    if (invoiceHasMore) invoiceStartingAfter = page.data[page.data.length - 1].id;
+  }
 
   // ── 3. Compute Revenue Health Score ──────────────────────────────────────────
   const [activeSubs, openInvoices, totalInvoices, recoveredCount] = await Promise.all([

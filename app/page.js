@@ -52,7 +52,7 @@ function Header() {
         </nav>
         <div className="flex items-center gap-3">
           <Link
-            href="/api/auth/signin"
+            href="/signin"
             className="text-sm text-[#4B5563] hover:text-[#1A1A1A] transition-colors"
           >
             Sign in

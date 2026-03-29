@@ -54,20 +54,24 @@ export async function POST(request) {
     // Send onboarding Email 1 (score reveal) only on successful sync
     if (syncSucceeded) {
       try {
-        const [updatedConnection, user] = await Promise.all([
-          StripeConnection.findOne({ userId }).select('healthScore onboardingEmailsSent').lean(),
-          User.findById(userId).select('email name').lean(),
-        ]);
+        // Guard: skip silently if Resend is not configured
+        if (!process.env.RESEND_API_KEY) {
+          console.error('[REVENANT:SYNC] ❌ RESEND_API_KEY not set — onboarding email 1 skipped');
+        } else {
+          const [updatedConnection, user] = await Promise.all([
+            StripeConnection.findOne({ userId }).select('healthScore onboardingEmailsSent').lean(),
+            User.findById(userId).select('email name').lean(),
+          ]);
 
-        const alreadySent = updatedConnection?.onboardingEmailsSent?.includes(0);
+          const alreadySent = updatedConnection?.onboardingEmailsSent?.includes(0);
 
-        if (user?.email && updatedConnection?.healthScore?.total != null && !alreadySent) {
-          const score = updatedConnection.healthScore.total;
-          const name = user.name || 'there';
-          await sendEmail({
-            to: user.email,
-            subject: `Your Revenue Health Score is ready`,
-            html: `<p>Hi ${name},</p>
+          if (user?.email && updatedConnection?.healthScore?.total != null && !alreadySent) {
+            const score = updatedConnection.healthScore.total;
+            const name = user.name || 'there';
+            await sendEmail({
+              to: user.email,
+              subject: `Your Revenue Health Score is ready`,
+              html: `<p>Hi ${name},</p>
 <p>Your Revenue Health Score is <strong>${score}/100</strong>.</p>
 <p>${score < 70
   ? 'Your revenue is at risk from payment failures. REVENANT can protect it automatically — activate your protection to start recovering.'
@@ -75,15 +79,23 @@ export async function POST(request) {
 }</p>
 <p><a href="${process.env.NEXT_PUBLIC_APP_URL}/onboarding/score">Activate protection →</a></p>
 <p>Thanks,<br/>The REVENANT team</p>`,
-            text: `Your Revenue Health Score: ${score}/100. Visit ${process.env.NEXT_PUBLIC_APP_URL}/onboarding/score to activate protection.`,
-          });
-          await StripeConnection.findByIdAndUpdate(connection._id, {
-            $addToSet: { onboardingEmailsSent: 0 },
-          });
+              text: `Your Revenue Health Score: ${score}/100. Visit ${process.env.NEXT_PUBLIC_APP_URL}/onboarding/score to activate protection.`,
+            });
+            await StripeConnection.findByIdAndUpdate(connection._id, {
+              $addToSet: { onboardingEmailsSent: 0 },
+            });
+            console.log('[REVENANT:SYNC] ✅ Onboarding email 1 sent', {
+              to: user.email,
+              score,
+            });
+          }
         }
       } catch (err) {
-        // Non-fatal: email failure should not affect sync status
-        console.error('[stripe-connect/sync] onboarding email 1 failed:', err.message);
+        // Non-fatal: email failure must not affect sync status or response
+        console.error('[REVENANT:SYNC] ❌ Onboarding email 1 failed', {
+          error: err.message,
+          userId,
+        });
       }
     }
 
