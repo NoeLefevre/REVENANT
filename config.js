@@ -76,8 +76,9 @@ const config = {
     cdn: "https://cdn-id.cloudfront.net/",
   },
   resend: {
-    fromNoReply: `REVENANT <noreply@revenant.so>`,
-    fromAdmin: `REVENANT <hello@revenant.so>`,
+    // TODO: replace with noreply@revenant.so once the domain is verified on Resend
+    fromNoReply: `REVENANT <onboarding@resend.dev>`,
+    fromAdmin: `REVENANT <onboarding@resend.dev>`,
     supportEmail: "hello@revenant.so",
   },
   colors: {
