@@ -1,5 +1,5 @@
 const Stripe = require('stripe')                                            
-const stripe = Stripe('sk_test_51TEEu0RqQO9pAco7k9uGLTUxMQuQT4RD3REyWa84igWBZHl5K8tKNpRDuLqMDuwsTDEHBnZhnM9UirD8nNNfnmqq00soszHv75')                 
+const stripe = Stripe('X')                 
 const CONNECTED_ACCOUNT_ID = 'acct_1TG5jaPk3SK7u5Jp'
 const opts = { stripeAccount: CONNECTED_ACCOUNT_ID }                        
   
