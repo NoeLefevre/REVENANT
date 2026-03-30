@@ -80,31 +80,40 @@ export async function POST(request) {
 
     switch (event.type) {
 
-      // ── invoice.payment_failed ──────────────────────────────────────────────
+      // ── Subscriptions ───────────────────────────────────────────────────────
+
+      case 'customer.subscription.created':
+      case 'customer.subscription.updated': {
+        await handleSubscriptionUpsert(event.data.object, orgId, stripeAccountId, stripe);
+        await refreshHealthScore(orgId);
+        break;
+      }
+
+      case 'customer.subscription.deleted': {
+        await handleSubscriptionDeleted(event.data.object, orgId);
+        await refreshHealthScore(orgId);
+        break;
+      }
+
+      // ── Invoices ────────────────────────────────────────────────────────────
+
       case 'invoice.payment_failed': {
         await handleInvoicePaymentFailed(event.data.object, orgId, stripeAccountId);
         await refreshHealthScore(orgId);
         break;
       }
 
-      // ── invoice.payment_succeeded ───────────────────────────────────────────
       case 'invoice.payment_succeeded': {
         await handleInvoicePaymentSucceeded(event.data.object, orgId);
         await refreshHealthScore(orgId);
         break;
       }
 
-      // ── customer.subscription.updated ──────────────────────────────────────
-      case 'customer.subscription.updated': {
-        await handleSubscriptionUpdated(event.data.object, orgId, stripeAccountId);
-        await refreshHealthScore(orgId);
-        break;
-      }
+      // ── Payment methods ─────────────────────────────────────────────────────
 
-      // ── payment_method.updated ──────────────────────────────────────────────
-      case 'payment_method.updated': {
+      case 'payment_method.updated':
+      case 'payment_method.attached': {
         await handlePaymentMethodUpdated(event.data.object, orgId);
-        await refreshHealthScore(orgId);
         break;
       }
 
@@ -139,6 +148,94 @@ export async function POST(request) {
 }
 
 // ── Event handlers ────────────────────────────────────────────────────────────
+
+/**
+ * Upserts a subscription (created or updated).
+ * Fetches the payment method to capture card metadata.
+ */
+async function handleSubscriptionUpsert(sub, orgId, stripeAccountId, stripe) {
+  let cardMeta = {};
+
+  const pmId = sub.default_payment_method;
+  if (pmId) {
+    try {
+      const pm = typeof pmId === 'string'
+        ? await stripe.paymentMethods.retrieve(pmId, { stripeAccount: stripeAccountId })
+        : pmId;
+
+      cardMeta = {
+        paymentMethodId: pm.id,
+        cardBrand: pm.card?.brand ?? null,
+        cardLast4: pm.card?.last4 ?? null,
+        cardExpMonth: pm.card?.exp_month ?? null,
+        cardExpYear: pm.card?.exp_year ?? null,
+        cardCountry: pm.card?.country ?? null,
+      };
+    } catch (err) {
+      console.error('[REVENANT:WEBHOOK] ⚠ Failed to fetch payment method', {
+        pmId,
+        error: err.message,
+      });
+    }
+  }
+
+  const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer?.id;
+
+  await Subscription.findOneAndUpdate(
+    { stripeSubscriptionId: sub.id },
+    {
+      orgId,
+      stripeAccountId,
+      stripeSubscriptionId: sub.id,
+      stripeCustomerId: customerId,
+      status: sub.status,
+      mrr: computeMRR(sub),
+      planId: sub.items?.data?.[0]?.price?.id ?? null,
+      currentPeriodStart: sub.current_period_start
+        ? new Date(sub.current_period_start * 1000)
+        : null,
+      currentPeriodEnd: sub.current_period_end
+        ? new Date(sub.current_period_end * 1000)
+        : null,
+      cancelAtPeriodEnd: sub.cancel_at_period_end ?? false,
+      ...cardMeta,
+    },
+    { upsert: true, new: true }
+  );
+
+  console.log('[REVENANT:WEBHOOK] Subscription upserted', {
+    stripeSubscriptionId: sub.id,
+    status: sub.status,
+    customerId,
+  });
+}
+
+/**
+ * Marks a subscription as canceled and stops all active dunning sequences
+ * linked to its invoices.
+ */
+async function handleSubscriptionDeleted(sub, orgId) {
+  await Subscription.findOneAndUpdate(
+    { stripeSubscriptionId: sub.id, orgId },
+    { status: 'canceled' }
+  );
+
+  // Stop active dunning sequences for all invoices tied to this subscription
+  const invoices = await Invoice.find({
+    stripeSubscriptionId: sub.id,
+    orgId,
+    status: 'open',
+  }).select('_id').lean();
+
+  for (const inv of invoices) {
+    await stopDunningSequence(inv._id, 'subscription_canceled');
+  }
+
+  console.log('[REVENANT:WEBHOOK] Subscription deleted', {
+    stripeSubscriptionId: sub.id,
+    invoicesStopped: invoices.length,
+  });
+}
 
 async function handleInvoicePaymentFailed(inv, orgId, stripeAccountId) {
   const failureCode = inv.last_payment_error?.code ?? null;
@@ -176,7 +273,7 @@ async function handleInvoicePaymentFailed(inv, orgId, stripeAccountId) {
     dieCategory,
   });
 
-  // ── 3. Propagate Recovery Score to Subscription (feeds customerRisk dimension) ─
+  // ── 3. Propagate Recovery Score to Subscription ───────────────────────────
   if (recoveryScore !== null && inv.subscription) {
     await Subscription.findOneAndUpdate(
       { stripeSubscriptionId: inv.subscription, orgId },
@@ -216,7 +313,7 @@ async function handleInvoicePaymentFailed(inv, orgId, stripeAccountId) {
 }
 
 async function handleInvoicePaymentSucceeded(inv, orgId) {
-  // Mark invoice as recovered
+  // Only process invoices we already track (those that previously failed)
   const invoice = await Invoice.findOneAndUpdate(
     { stripeInvoiceId: inv.id, orgId },
     {
@@ -226,37 +323,19 @@ async function handleInvoicePaymentSucceeded(inv, orgId) {
     }
   );
 
-  // Stop any active dunning sequence for this invoice
-  if (invoice?._id) {
-    await stopDunningSequence(invoice._id, 'payment_success');
+  if (!invoice) {
+    // Invoice was paid on first attempt — not tracked, nothing to do
+    console.log('[REVENANT:WEBHOOK] invoice.payment_succeeded ignored (not tracked)', {
+      stripeInvoiceId: inv.id,
+    });
+    return;
   }
-}
 
-async function handleSubscriptionUpdated(sub, orgId, stripeAccountId) {
-  await Subscription.findOneAndUpdate(
-    { stripeSubscriptionId: sub.id, orgId },
-    {
-      orgId,
-      stripeAccountId,
-      stripeSubscriptionId: sub.id,
-      stripeCustomerId: typeof sub.customer === 'string' ? sub.customer : sub.customer?.id,
-      status: sub.status,
-      mrr: computeMRR(sub),
-      planId: sub.items?.data?.[0]?.price?.id ?? null,
-      currentPeriodStart: sub.current_period_start
-        ? new Date(sub.current_period_start * 1000)
-        : null,
-      currentPeriodEnd: sub.current_period_end
-        ? new Date(sub.current_period_end * 1000)
-        : null,
-      cancelAtPeriodEnd: sub.cancel_at_period_end ?? false,
-    },
-    { upsert: true, new: true }
-  );
+  // Stop any active dunning sequence for this invoice
+  await stopDunningSequence(invoice._id, 'payment_success');
 }
 
 async function handlePaymentMethodUpdated(pm, orgId) {
-  // Update card metadata on all subscriptions using this payment method
   await Subscription.updateMany(
     { paymentMethodId: pm.id, orgId },
     {
@@ -271,22 +350,16 @@ async function handlePaymentMethodUpdated(pm, orgId) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/**
- * Computes Recovery Score for an invoice at the moment of failure.
- * Uses subscription tenure, MRR, and past incident history from MongoDB.
- */
 async function computeInvoiceRecoveryScore({ orgId, stripeCustomerId, stripeSubscriptionId, dieCategory }) {
   try {
     const sub = await Subscription.findOne({ stripeSubscriptionId, orgId });
 
-    // Tenure: months since subscription start
     let tenureMonths = 0;
     if (sub?.currentPeriodStart) {
       const msPerMonth = 1000 * 60 * 60 * 24 * 30;
       tenureMonths = Math.floor((Date.now() - new Date(sub.currentPeriodStart).getTime()) / msPerMonth);
     }
 
-    // hasIncidents: any prior open or recovered invoices for this customer (excluding current event)
     const priorIncidents = await Invoice.countDocuments({
       orgId,
       stripeCustomerId,
@@ -294,18 +367,14 @@ async function computeInvoiceRecoveryScore({ orgId, stripeCustomerId, stripeSubs
     });
     const hasIncidents = priorIncidents > 0;
 
-    // MRR from subscription (in cents)
     const mrrCents = sub?.mrr ?? 0;
-
-    // hasRecentDowngrade: not tracked yet — default to false
-    const hasRecentDowngrade = false;
 
     return computeRecoveryScore({
       tenureMonths,
       hasIncidents,
       mrrCents,
       dieCategory,
-      hasRecentDowngrade,
+      hasRecentDowngrade: false,
     });
   } catch (err) {
     console.error('[computeInvoiceRecoveryScore] Error:', err);
@@ -313,15 +382,10 @@ async function computeInvoiceRecoveryScore({ orgId, stripeCustomerId, stripeSubs
   }
 }
 
-/**
- * Creates a DunningSequence with pre-scheduled steps for a failed invoice.
- * No-op if a sequence already exists for this invoice.
- */
 async function startDunningSequence({ invoice, orgId }) {
   const delays = SEQUENCE_DELAYS_DAYS[invoice.dieCategory];
   if (!delays) return;
 
-  // Avoid duplicate sequences for the same invoice
   const existing = await DunningSequence.findOne({
     invoiceId: invoice._id,
     status: 'active',
@@ -345,9 +409,6 @@ async function startDunningSequence({ invoice, orgId }) {
   });
 }
 
-/**
- * Marks the active DunningSequence for an invoice as stopped/recovered.
- */
 async function stopDunningSequence(invoiceId, reason) {
   await DunningSequence.findOneAndUpdate(
     { invoiceId, status: 'active' },
@@ -359,10 +420,6 @@ async function stopDunningSequence(invoiceId, reason) {
   );
 }
 
-/**
- * Recomputes the Revenue Health Score from live DB state and persists it to StripeConnection.
- * Called after any payment event that changes invoice status.
- */
 async function refreshHealthScore(orgId) {
   try {
     const [openInvoices, activeSubs, totalInvoices, recoveredCount] = await Promise.all([
@@ -390,7 +447,6 @@ async function refreshHealthScore(orgId) {
       }
     );
   } catch (err) {
-    // Non-critical: log but don't fail the webhook response
     console.error('[refreshHealthScore] Error:', err);
   }
 }
