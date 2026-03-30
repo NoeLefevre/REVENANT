@@ -61,6 +61,13 @@ const categoryFilters: Array<{ label: string; value: string }> = [
   { label: 'Permanent', value: 'HARD_PERMANENT' },
 ];
 
+const statusFilters: Array<{ label: string; value: string }> = [
+  { label: 'All', value: '' },
+  { label: 'In recovery', value: 'open' },
+  { label: 'Recovered', value: 'recovered' },
+  { label: 'Void', value: 'void' },
+];
+
 function StatusBadge({ status }: { status: InvoiceStatus | string }) {
   if (status === 'open') {
     return (
@@ -92,7 +99,7 @@ export default async function InvoicesPage({ searchParams }: PageProps) {
   const params = await searchParams;
   const page = Math.max(1, parseInt(params.page ?? '1', 10));
   const category = params.category ?? '';
-  const statusFilter = params.status ?? 'open';
+  const statusFilter = params.status ?? '';
 
   // session.user.id is the User._id (ObjectId as string) — matches orgId in all models
   const orgId = session.user.id;
@@ -138,24 +145,46 @@ export default async function InvoicesPage({ searchParams }: PageProps) {
       </div>
 
       {/* Filter bar */}
-      <div className="flex items-center gap-2">
-        {categoryFilters.map((f) => {
-          const isActive = category === f.value;
-          return (
-            <a
-              key={f.value}
-              href={`/invoices?category=${f.value}&status=${statusFilter}`}
-              className="px-4 py-1.5 rounded-lg text-sm font-medium border transition-colors"
-              style={{
-                backgroundColor: isActive ? '#EDE9FE' : 'white',
-                color: isActive ? '#6C63FF' : '#4B5563',
-                borderColor: isActive ? '#6C63FF' : '#E5E7EB',
-              }}
-            >
-              {f.label}
-            </a>
-          );
-        })}
+      <div className="flex flex-col gap-2">
+        {/* Status filters */}
+        <div className="flex items-center gap-2">
+          {statusFilters.map((f) => {
+            const isActive = statusFilter === f.value;
+            return (
+              <a
+                key={f.value}
+                href={`/invoices?status=${f.value}&category=${category}`}
+                className="px-3 py-1 rounded-lg text-sm font-medium border transition-colors"
+                style={{
+                  backgroundColor: isActive ? '#1A1A1A' : 'white',
+                  color: isActive ? 'white' : '#4B5563',
+                  borderColor: isActive ? '#1A1A1A' : '#E5E7EB',
+                }}
+              >
+                {f.label}
+              </a>
+            );
+          })}
+          <span className="text-[#E5E7EB] mx-1">|</span>
+          {/* Category filters */}
+          {categoryFilters.map((f) => {
+            const isActive = category === f.value;
+            return (
+              <a
+                key={f.value}
+                href={`/invoices?category=${f.value}&status=${statusFilter}`}
+                className="px-3 py-1 rounded-lg text-sm font-medium border transition-colors"
+                style={{
+                  backgroundColor: isActive ? '#EDE9FE' : 'white',
+                  color: isActive ? '#6C63FF' : '#4B5563',
+                  borderColor: isActive ? '#6C63FF' : '#E5E7EB',
+                }}
+              >
+                {f.label}
+              </a>
+            );
+          })}
+        </div>
       </div>
 
       {/* Error */}
