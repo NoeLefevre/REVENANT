@@ -48,6 +48,11 @@ export async function POST() {
       stripeConnectionId: null,
     });
 
+    console.log('[REVENANT:DISCONNECT] Stripe account disconnected', {
+      userId: session.user.id,
+      stripeAccountId: connection.stripeAccountId,
+    });
+
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[stripe-connect/disconnect]', error);

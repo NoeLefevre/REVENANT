@@ -2,6 +2,7 @@ import { auth } from '@/libs/auth';
 import { redirect } from 'next/navigation';
 import connectMongo from '@/libs/mongoose';
 import StripeConnectionModel from '@/models/StripeConnection';
+import DisconnectStripeButton from '@/components/DisconnectStripeButton';
 
 interface PageProps {
   searchParams: Promise<{
@@ -221,17 +222,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
                     This will stop all recovery sequences and remove your Stripe connection.
                   </p>
                 </div>
-                {/* Correct URL: /api/stripe-connect/disconnect */}
-                <form method="POST" action="/api/stripe-connect/disconnect">
-                  <button
-                    type="submit"
-                    className="flex-shrink-0 px-4 py-2 rounded-lg text-white text-[13px] font-medium hover:opacity-90 transition-opacity"
-                    style={{ backgroundColor: '#DC2626' }}
-                    disabled={!stripeConnection}
-                  >
-                    Disconnect
-                  </button>
-                </form>
+                <DisconnectStripeButton disabled={!stripeConnection} />
               </div>
             </div>
           </>
