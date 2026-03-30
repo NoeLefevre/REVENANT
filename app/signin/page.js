@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
 import { signIn } from "next-auth/react";
 import { useSearchParams } from "next/navigation";
 import config from "@/config";
@@ -13,7 +13,7 @@ const ERROR_MESSAGES = {
   Default: "Une erreur est survenue. Réessayez.",
 };
 
-export default function SignInPage() {
+function SignInContent() {
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") || config.auth.callbackUrl;
   const errorParam = searchParams.get("error");
@@ -174,5 +174,13 @@ export default function SignInPage() {
         </div>
       </div>
     </main>
+  );
+}
+
+export default function SignInPage() {
+  return (
+    <Suspense fallback={null}>
+      <SignInContent />
+    </Suspense>
   );
 }
