@@ -37,7 +37,7 @@ export default function DisconnectStripeButton({ disabled }: Props) {
         type="button"
         disabled={disabled || loading}
         onClick={() => { setError(null); setModalOpen(true); }}
-        className="flex-shrink-0 px-4 py-2 rounded-lg text-white text-[13px] font-medium hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+        className="flex-shrink-0 px-4 py-2 rounded-lg text-white text-[13px] font-medium hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
         style={{ backgroundColor: '#DC2626' }}
       >
         Disconnect
