@@ -1,6 +1,6 @@
 const Stripe = require('stripe')
 const stripe = Stripe('sk_test_51TEEu0RqQO9pAco7k9uGLTUxMQuQT4RD3REyWa84igWBZHl5K8tKNpRDuLqMDuwsTDEHBnZhnM9UirD8nNNfnmqq00soszHv75')
-const CONNECTED_ACCOUNT_ID = 'acct_1TEyAjFOKMR1Czjl'
+const CONNECTED_ACCOUNT_ID = 'acct_1THqSiBeIJa2lMvm'
 const opts = { stripeAccount: CONNECTED_ACCOUNT_ID }
 
 async function seed() {

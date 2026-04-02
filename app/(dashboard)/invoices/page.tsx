@@ -2,8 +2,10 @@ import { auth } from '@/libs/auth';
 import { redirect } from 'next/navigation';
 import connectMongo from '@/libs/mongoose';
 import InvoiceModel from '@/models/Invoice';
+import StripeConnectionModel from '@/models/StripeConnection';
 import DIEBadge from '@/components/revenant/DIEBadge';
 import RecoveryScore from '@/components/revenant/RecoveryScore';
+import { getStripeInvoiceUrl } from '@/libs/stripeUrls';
 import { Invoice, InvoiceStatus } from '@/types/revenant';
 
 const PAGE_SIZE = 20;
@@ -106,6 +108,7 @@ export default async function InvoicesPage({ searchParams }: PageProps) {
 
   let invoices: Invoice[] = [];
   let total = 0;
+  let livemode = false;
   let error: string | null = null;
 
   try {
@@ -115,14 +118,19 @@ export default async function InvoicesPage({ searchParams }: PageProps) {
     if (statusFilter) query.status = statusFilter;
     if (category) query.dieCategory = category;
 
-    total = await (InvoiceModel as any).countDocuments(query);
-    const raw = await (InvoiceModel as any)
-      .find(query)
-      .sort({ recoveryScore: -1, createdAt: -1 })
-      .skip((page - 1) * PAGE_SIZE)
-      .limit(PAGE_SIZE)
-      .lean();
+    const [connection, count, raw] = await Promise.all([
+      (StripeConnectionModel as any).findOne({ userId: orgId }).select('livemode').lean(),
+      (InvoiceModel as any).countDocuments(query),
+      (InvoiceModel as any)
+        .find(query)
+        .sort({ recoveryScore: -1, createdAt: -1 })
+        .skip((page - 1) * PAGE_SIZE)
+        .limit(PAGE_SIZE)
+        .lean(),
+    ]);
 
+    livemode = connection?.livemode ?? false;
+    total = count;
     invoices = raw.map(docToInvoice);
   } catch (err) {
     console.error('[InvoicesPage] Error:', err);
@@ -288,11 +296,11 @@ export default async function InvoicesPage({ searchParams }: PageProps) {
 
                 {/* Actions — link to Stripe invoice */}
                 <a
-                  href={`https://dashboard.stripe.com/invoices/${invoice.stripeInvoiceId}`}
+                  href={getStripeInvoiceUrl(invoice.stripeInvoiceId, livemode)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  title="View in Stripe"
-                  className="flex items-center justify-center w-8 h-8 rounded text-[#9CA3AF] hover:bg-[#F3F4F6] hover:text-[#4B5563] transition-colors"
+                  title="View in Stripe Dashboard"
+                  className="flex items-center justify-center w-8 h-8 rounded text-[#9CA3AF] hover:bg-[#F3F4F6] hover:text-[#6C63FF] transition-colors"
                 >
                   ↗
                 </a>

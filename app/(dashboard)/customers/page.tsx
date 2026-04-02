@@ -2,7 +2,9 @@ import { auth } from '@/libs/auth';
 import { redirect } from 'next/navigation';
 import connectMongo from '@/libs/mongoose';
 import SubscriptionModel from '@/models/Subscription';
+import StripeConnectionModel from '@/models/StripeConnection';
 import RecoveryScore from '@/components/revenant/RecoveryScore';
+import { getStripeCustomerUrl } from '@/libs/stripeUrls';
 import { Subscription } from '@/types/revenant';
 
 const PAGE_SIZE = 20;
@@ -198,6 +200,7 @@ export default async function CustomersPage({ searchParams }: PageProps) {
 
   let subscriptions: Subscription[] = [];
   let total = 0;
+  let livemode = false;
   let error: string | null = null;
 
   try {
@@ -212,14 +215,19 @@ export default async function CustomersPage({ searchParams }: PageProps) {
       ];
     }
 
-    total = await (SubscriptionModel as any).countDocuments(query);
-    const raw = await (SubscriptionModel as any)
-      .find(query)
-      .sort({ mrr: -1 })
-      .skip((page - 1) * PAGE_SIZE)
-      .limit(PAGE_SIZE)
-      .lean();
+    const [connection, count, raw] = await Promise.all([
+      (StripeConnectionModel as any).findOne({ userId: orgId }).select('livemode').lean(),
+      (SubscriptionModel as any).countDocuments(query),
+      (SubscriptionModel as any)
+        .find(query)
+        .sort({ mrr: -1 })
+        .skip((page - 1) * PAGE_SIZE)
+        .limit(PAGE_SIZE)
+        .lean(),
+    ]);
 
+    livemode = connection?.livemode ?? false;
+    total = count;
     subscriptions = raw.map(docToSubscription);
   } catch (err) {
     console.error('[CustomersPage] Error:', err);
@@ -346,10 +354,16 @@ export default async function CustomersPage({ searchParams }: PageProps) {
                 <StatusBadge status={sub.status} />
               </div>
 
-              {/* Actions */}
-              <button className="flex items-center justify-center w-8 h-8 rounded text-[#9CA3AF] hover:bg-[#F3F4F6] transition-colors">
-                ⋯
-              </button>
+              {/* Actions — link to Stripe customer */}
+              <a
+                href={getStripeCustomerUrl(sub.stripeCustomerId, livemode)}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="View in Stripe Dashboard"
+                className="flex items-center justify-center w-8 h-8 rounded text-[#9CA3AF] hover:bg-[#F3F4F6] hover:text-[#6C63FF] transition-colors"
+              >
+                ↗
+              </a>
             </div>
           ))
         )}
