@@ -34,7 +34,7 @@ const dunningSequenceSchema = new mongoose.Schema({
   stoppedAt: { type: Date },
   stoppedReason: {
     type: String,
-    enum: ['payment_success', 'card_updated', 'manual', 'hard_failure'],
+    enum: ['payment_success', 'card_updated', 'manual', 'hard_failure', 'stripe_disconnected'],
   },
 }, { timestamps: true });
 

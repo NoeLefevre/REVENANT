@@ -60,16 +60,41 @@ export default function DisconnectStripeButton({ disabled }: Props) {
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.4)' }}>
           <div
-            className="bg-white rounded-xl p-6 flex flex-col gap-4 w-full"
-            style={{ maxWidth: '420px', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}
+            className="bg-white rounded-xl p-6 flex flex-col gap-5 w-full"
+            style={{ maxWidth: '440px', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}
           >
             {/* Header */}
             <div className="flex flex-col gap-1">
-              <h2 className="text-[16px] font-bold text-[#1A1A1A]">Déconnecter Stripe ?</h2>
+              <h2 className="text-[16px] font-bold text-[#1A1A1A]">Déconnecter votre compte Stripe ?</h2>
               <p className="text-[13px] text-[#4B5563]">
-                Toutes les séquences de récupération actives seront stoppées immédiatement.
-                Cette action ne peut pas être annulée.
+                Les éléments suivants seront définitivement supprimés :
               </p>
+            </div>
+
+            {/* What gets deleted */}
+            <ul className="flex flex-col gap-2">
+              {[
+                'Toutes vos invoices REVENANT',
+                'Toutes vos subscriptions suivies',
+                'Toutes les séquences de dunning actives',
+                "Tout l'historique d'emails envoyés",
+              ].map((item) => (
+                <li key={item} className="flex items-center gap-2.5 text-[13px] text-[#4B5563]">
+                  <span className="text-[#DC2626] text-[15px] leading-none">✕</span>
+                  {item}
+                </li>
+              ))}
+            </ul>
+
+            {/* Warning */}
+            <div
+              className="flex items-start gap-2.5 rounded-lg px-3 py-2.5 text-[12px]"
+              style={{ backgroundColor: '#FEF2F2', color: '#991B1B' }}
+            >
+              <span className="flex-shrink-0 font-bold">⚠</span>
+              <span>
+                Cette action est <strong>irréversible</strong>. Vous pourrez reconnecter un nouveau compte Stripe à tout moment, mais les données actuelles ne seront pas récupérables.
+              </span>
             </div>
 
             {/* Error */}
@@ -80,7 +105,7 @@ export default function DisconnectStripeButton({ disabled }: Props) {
             )}
 
             {/* Actions */}
-            <div className="flex items-center justify-end gap-3 pt-1">
+            <div className="flex items-center justify-end gap-3">
               <button
                 type="button"
                 disabled={loading}
@@ -102,7 +127,7 @@ export default function DisconnectStripeButton({ disabled }: Props) {
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
                   </svg>
                 )}
-                {loading ? 'Déconnexion…' : 'Déconnecter'}
+                {loading ? 'Déconnexion…' : 'Déconnecter et supprimer'}
               </button>
             </div>
           </div>

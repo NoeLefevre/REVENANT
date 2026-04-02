@@ -5,6 +5,10 @@ import connectMongo from '@/libs/mongoose';
 import { encrypt } from '@/libs/encryption';
 import StripeConnection from '@/models/StripeConnection';
 import User from '@/models/User';
+import Invoice from '@/models/Invoice';
+import Subscription from '@/models/Subscription';
+import DunningSequence from '@/models/DunningSequence';
+import EmailEvent from '@/models/EmailEvent';
 
 export async function GET(request) {
   const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -56,12 +60,61 @@ export async function GET(request) {
 
     await connectMongo();
 
-    // Save encrypted access token to StripeConnection (upsert in case of reconnect)
+    const orgId = session.user.id;
+    const newStripeAccountId = response.stripe_user_id;
+
+    // Check if there is an existing connection for this user with a DIFFERENT Stripe account.
+    // If so, clean up all data from the previous account before creating the new connection.
+    // If it's the same account (token refresh), we skip the cleanup.
+    const existingConnection = await StripeConnection.findOne({ userId: orgId });
+
+    if (existingConnection && existingConnection.stripeAccountId !== newStripeAccountId) {
+      console.log('[stripe-connect/callback] Different Stripe account detected — cleaning up previous account data', {
+        userId: orgId,
+        oldStripeAccountId: existingConnection.stripeAccountId,
+        newStripeAccountId,
+      });
+
+      // Stop active sequences before bulk delete
+      await DunningSequence.updateMany(
+        { orgId, status: 'active' },
+        { status: 'stopped', stoppedAt: new Date(), stoppedReason: 'stripe_disconnected' }
+      );
+
+      const [invoiceResult, subResult, emailResult, dunningResult] = await Promise.all([
+        Invoice.deleteMany({ orgId }),
+        Subscription.deleteMany({ orgId }),
+        EmailEvent.deleteMany({ orgId }),
+        DunningSequence.deleteMany({ orgId }),
+      ]);
+
+      // Revoke old token (non-blocking)
+      try {
+        await stripe.oauth.deauthorize({
+          client_id: process.env.STRIPE_CONNECT_CLIENT_ID,
+          stripe_user_id: existingConnection.stripeAccountId,
+        });
+      } catch (revokeErr) {
+        console.warn('[stripe-connect/callback] Old token revoke failed', {
+          stripeAccountId: existingConnection.stripeAccountId,
+          error: revokeErr.message,
+        });
+      }
+
+      console.log('[stripe-connect/callback] Previous account data cleaned up', {
+        deletedInvoices: invoiceResult.deletedCount,
+        deletedSubscriptions: subResult.deletedCount,
+        deletedEmailEvents: emailResult.deletedCount,
+        deletedSequences: dunningResult.deletedCount,
+      });
+    }
+
+    // Save encrypted access token to StripeConnection (upsert)
     const connection = await StripeConnection.findOneAndUpdate(
-      { userId: session.user.id },
+      { userId: orgId },
       {
-        userId: session.user.id,
-        stripeAccountId: response.stripe_user_id,
+        userId: orgId,
+        stripeAccountId: newStripeAccountId,
         accessToken: encrypt(response.access_token),
         livemode: response.livemode ?? false,
         syncStatus: 'pending',
@@ -72,7 +125,7 @@ export async function GET(request) {
     );
 
     // Link connection back to User
-    await User.findByIdAndUpdate(session.user.id, {
+    await User.findByIdAndUpdate(orgId, {
       stripeConnectionId: connection._id,
     });
 
@@ -83,7 +136,7 @@ export async function GET(request) {
         'Content-Type': 'application/json',
         'x-internal-secret': process.env.INTERNAL_SECRET,
       },
-      body: JSON.stringify({ userId: session.user.id }),
+      body: JSON.stringify({ userId: orgId }),
     }).catch((err) => console.error('[stripe-connect/callback] sync trigger failed:', err));
 
     // Clear the CSRF state cookie and redirect

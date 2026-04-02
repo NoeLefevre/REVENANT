@@ -4,6 +4,7 @@ import StripeConnection from '@/models/StripeConnection';
 import Subscription from '@/models/Subscription';
 import Invoice from '@/models/Invoice';
 import DunningSequence from '@/models/DunningSequence';
+import EmailEvent from '@/models/EmailEvent';
 import User from '@/models/User';
 
 /**
@@ -33,10 +34,11 @@ export async function GET(request) {
     .lean();
 
   // ── Counts ───────────────────────────────────────────────────────────────────
-  const [invoiceCount, subCount, dunningCount] = await Promise.all([
+  const [invoiceCount, subCount, dunningCount, emailEventCount] = await Promise.all([
     Invoice.countDocuments(orgFilter),
     Subscription.countDocuments(orgFilter),
     DunningSequence.countDocuments(orgFilter),
+    EmailEvent.countDocuments(orgFilter),
   ]);
 
   // ── Breakdown by status ──────────────────────────────────────────────────────
@@ -109,6 +111,7 @@ export async function GET(request) {
       invoices: invoiceCount,
       subscriptions: subCount,
       dunningSequences: dunningCount,
+      emailEvents: emailEventCount,
     },
     invoicesByStatus,
     invoicesByDieCategory,
