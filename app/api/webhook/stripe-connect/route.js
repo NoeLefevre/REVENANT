@@ -338,26 +338,38 @@ async function handleSubscriptionDeleted(sub, orgId, stripeAccountId, connection
 
 async function handleTrialGuard(sub, orgId, stripeAccountId, connection) {
   const pmId = sub.default_payment_method;
+  const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer?.id;
+
+  const clientStripe = getClientStripe(connection.accessToken);
+
+  // Retrieve customer readable data
+  let customerEmail = null;
+  let customerName = null;
+  try {
+    const customer = await clientStripe.customers.retrieve(customerId);
+    customerEmail = customer.email ?? null;
+    customerName = customer.name ?? null;
+  } catch (err) {
+    console.error('[REVENANT:SMARTCHARGE] Failed to retrieve customer', { customerId, error: err.message });
+  }
 
   // No payment method attached — create monitoring record and bail
   if (!pmId) {
     await TrialGuard.create({
       orgId, stripeAccountId,
-      stripeCustomerId: typeof sub.customer === 'string' ? sub.customer : sub.customer?.id,
+      stripeCustomerId: customerId,
       stripeSubscriptionId: sub.id,
+      customerEmail,
+      customerName,
       paymentIntentId: null,
       riskSignals: [],
       isHighRisk: false,
       status: 'monitoring',
       trialEnd: sub.trial_end ? new Date(sub.trial_end * 1000) : null,
     });
-    console.log('[REVENANT:SMARTCHARGE] No payment method — monitoring only', {
-      stripeSubscriptionId: sub.id,
-    });
+    console.log('[REVENANT:SMARTCHARGE] No payment method — monitoring only', { stripeSubscriptionId: sub.id });
     return;
   }
-
-  const clientStripe = getClientStripe(connection.accessToken);
 
   // Retrieve the payment method from the connected account
   let pm;
@@ -370,7 +382,14 @@ async function handleTrialGuard(sub, orgId, stripeAccountId, connection) {
     return;
   }
 
-  const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer?.id;
+  const cardData = {
+    cardLast4: pm.card?.last4 ?? null,
+    cardBrand: pm.card?.brand ?? null,
+    cardExpMonth: pm.card?.exp_month ?? null,
+    cardExpYear: pm.card?.exp_year ?? null,
+    cardFunding: pm.card?.funding ?? null,
+  };
+
   const { isHighRisk, risks } = assessTrialRisk(pm, sub);
 
   console.log('[REVENANT:SMARTCHARGE] Risk assessment', {
@@ -385,6 +404,9 @@ async function handleTrialGuard(sub, orgId, stripeAccountId, connection) {
       orgId, stripeAccountId,
       stripeCustomerId: customerId,
       stripeSubscriptionId: sub.id,
+      customerEmail,
+      customerName,
+      ...cardData,
       paymentIntentId: null,
       riskSignals: [],
       isHighRisk: false,
@@ -408,6 +430,9 @@ async function handleTrialGuard(sub, orgId, stripeAccountId, connection) {
     orgId, stripeAccountId,
     stripeCustomerId: customerId,
     stripeSubscriptionId: sub.id,
+    customerEmail,
+    customerName,
+    ...cardData,
     paymentIntentId: paymentIntent?.id ?? null,
     riskSignals: risks,
     isHighRisk: true,

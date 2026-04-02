@@ -33,7 +33,7 @@ async function seed() {
       )
       console.log(`   ↳ PaymentMethod attaché : ${pm.id}`)
     } catch (err) {
-      console.log(`   ↳ Attach échoué (${err.decline_code || err.code})`)
+      console.log(`   ↳ Attach échoué: ${err.message} (type: ${err.type}, code: ${err.code})`)
       return
     }
 
@@ -74,7 +74,7 @@ async function seed() {
   await createCustomer('fraud@test.com', 'Fraud Customer', 'pm_card_chargeDeclinedFraudulent')
   console.log('✅ Customer 4 — fraude (HARD_PERMANENT)\n')
 
-  await createCustomer('prepaid@test.com', 'Prepaid Trial','pm_card_visa_prepaid', 7)
+  await createCustomer('prepaid@test.com', 'Prepaid Trial', 'pm_card_mastercard_prepaid', 7)
   console.log('✅ Customer 6 — carte prépayée en trial (SmartCharge HIGH RISK)\n')
 
   await createCustomer('trial@test.com', 'Trial Customer', 'pm_card_visa', 7)

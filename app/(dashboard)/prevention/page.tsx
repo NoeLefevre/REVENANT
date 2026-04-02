@@ -82,17 +82,35 @@ export default async function PreventionPage() {
     ]);
 
     livemode = connection?.livemode ?? false;
-    trialGuards = rawTrialGuards.map((tg: any) => ({
-      ...tg,
-      _id: tg._id?.toString(),
-      orgId: tg.orgId?.toString(),
-      trialEnd: tg.trialEnd?.toISOString() ?? null,
-      capturedAt: tg.capturedAt?.toISOString() ?? null,
-      cancelledAt: tg.cancelledAt?.toISOString() ?? null,
-      failedAt: tg.failedAt?.toISOString() ?? null,
-      createdAt: tg.createdAt?.toISOString() ?? '',
-      updatedAt: tg.updatedAt?.toISOString() ?? '',
-    }));
+
+    // Build a lookup map from Subscriptions to enrich TrialGuards that lack customer data
+    const subByCustomerId: Record<string, any> = {};
+    for (const sub of allSubs) {
+      if (sub.stripeCustomerId) subByCustomerId[sub.stripeCustomerId] = sub;
+    }
+
+    trialGuards = rawTrialGuards.map((tg: any) => {
+      const fallback = subByCustomerId[tg.stripeCustomerId];
+      return {
+        ...tg,
+        _id: tg._id?.toString(),
+        orgId: tg.orgId?.toString(),
+        // Enrich from Subscription if TrialGuard was created before we stored customer data
+        customerEmail: tg.customerEmail ?? fallback?.customerEmail ?? null,
+        customerName: tg.customerName ?? fallback?.customerName ?? null,
+        cardLast4: tg.cardLast4 ?? fallback?.cardLast4 ?? null,
+        cardBrand: tg.cardBrand ?? fallback?.cardBrand ?? null,
+        cardExpMonth: tg.cardExpMonth ?? fallback?.cardExpMonth ?? null,
+        cardExpYear: tg.cardExpYear ?? fallback?.cardExpYear ?? null,
+        cardFunding: tg.cardFunding ?? null,
+        trialEnd: tg.trialEnd?.toISOString() ?? null,
+        capturedAt: tg.capturedAt?.toISOString() ?? null,
+        cancelledAt: tg.cancelledAt?.toISOString() ?? null,
+        failedAt: tg.failedAt?.toISOString() ?? null,
+        createdAt: tg.createdAt?.toISOString() ?? '',
+        updatedAt: tg.updatedAt?.toISOString() ?? '',
+      };
+    });
 
     // Classify by expiry
     for (const sub of allSubs) {
@@ -278,54 +296,96 @@ export default async function PreventionPage() {
         ) : (
           trialGuards.map((tg: any) => {
             const statusConfig: Record<string, { bg: string; text: string; label: string }> = {
-              monitoring:  { bg: '#F3F4F6', text: '#6B7280', label: 'Monitoring' },
-              hold_active: { bg: '#EDE9FE', text: '#6C63FF', label: 'Hold active' },
-              captured:    { bg: '#DCFCE7', text: '#15803D', label: 'Captured' },
-              cancelled:   { bg: '#F3F4F6', text: '#6B7280', label: 'Cancelled' },
-              failed:      { bg: '#FEE2E2', text: '#DC2626', label: 'Failed' },
-              expired:     { bg: '#FEF9C3', text: '#854D0E', label: 'Expired' },
+              monitoring:  { bg: '#F3F4F6', text: '#6B7280', label: 'Surveillance' },
+              hold_active: { bg: '#EDE9FE', text: '#6C63FF', label: 'Hold actif 🔒' },
+              captured:    { bg: '#DCFCE7', text: '#15803D', label: 'Capturé ✓' },
+              cancelled:   { bg: '#F3F4F6', text: '#6B7280', label: 'Annulé' },
+              failed:      { bg: '#FEE2E2', text: '#DC2626', label: 'Échoué ✗' },
+              expired:     { bg: '#FEF9C3', text: '#854D0E', label: 'Expiré' },
             };
             const sc = statusConfig[tg.status] ?? statusConfig.monitoring;
 
-            const signalLabels: Record<string, string> = {
-              prepaid_card: 'Prepaid',
-              card_expires_before_trial_end: 'Card exp.',
-              high_radar_score: 'Radar',
+            const signalConfig: Record<string, { label: string; bg: string; color: string }> = {
+              prepaid_card:                  { label: 'Carte prépayée', bg: '#FEF3C7', color: '#92400E' },
+              card_expires_before_trial_end: { label: 'Expire avant trial', bg: '#FEE2E2', color: '#991B1B' },
+              high_radar_score:              { label: 'Score Radar élevé', bg: '#FEE2E2', color: '#991B1B' },
             };
+
+            const displayName = tg.customerName || tg.customerEmail || null;
+            const initials = tg.customerName
+              ? tg.customerName.split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase()
+              : tg.customerEmail
+                ? tg.customerEmail.slice(0, 2).toUpperCase()
+                : '?';
+
+            const brandLabel = tg.cardBrand
+              ? tg.cardBrand.charAt(0).toUpperCase() + tg.cardBrand.slice(1)
+              : null;
+
+            const trialEndDate = tg.trialEnd ? new Date(tg.trialEnd) : null;
+            const trialEndDays = trialEndDate
+              ? Math.ceil((trialEndDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+              : null;
 
             return (
               <div
                 key={tg._id}
-                className="grid items-center px-4 h-14 border-b border-[#E5E7EB] last:border-b-0 hover:bg-[#FAFAFA] transition-colors"
+                className="grid items-center px-4 border-b border-[#E5E7EB] last:border-b-0 hover:bg-[#FAFAFA] transition-colors"
                 style={{
                   gridTemplateColumns: '1fr 10rem 6rem 7rem 6rem 2.5rem',
+                  minHeight: '3.5rem',
+                  paddingTop: '0.5rem',
+                  paddingBottom: '0.5rem',
                   borderLeft: tg.isHighRisk ? '2px solid #DC2626' : undefined,
                 }}
               >
-                {/* Customer */}
-                <div className="flex flex-col min-w-0 pr-2">
-                  <span className="text-[13px] font-medium text-[#1A1A1A] truncate">
-                    {tg.stripeCustomerId}
-                  </span>
-                  <span className="text-[11px] font-mono text-[#9CA3AF] truncate">
-                    {tg.stripeSubscriptionId}
-                  </span>
+                {/* Customer — avatar + nom/email + carte */}
+                <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                  <div
+                    className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-bold text-white"
+                    style={{ backgroundColor: tg.isHighRisk ? '#DC2626' : '#6C63FF' }}
+                  >
+                    {initials}
+                  </div>
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-[13px] font-medium text-[#1A1A1A] truncate">
+                      {displayName ?? (
+                        <span className="font-mono text-[#9CA3AF]">{tg.stripeCustomerId}</span>
+                      )}
+                    </span>
+                    {displayName && tg.customerEmail && tg.customerName && (
+                      <span className="text-[11px] text-[#9CA3AF] truncate">{tg.customerEmail}</span>
+                    )}
+                    {brandLabel && tg.cardLast4 && (
+                      <span className="text-[11px] text-[#6B7280]">
+                        {brandLabel} ···{tg.cardLast4}
+                        {tg.cardFunding === 'prepaid' && (
+                          <span className="ml-1 inline-flex items-center rounded px-1 py-0 text-[10px] font-medium bg-[#FEF3C7] text-[#92400E]">
+                            Prépayée ⚠
+                          </span>
+                        )}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Risk signals */}
                 <div className="flex items-center gap-1 flex-wrap">
                   {tg.riskSignals.length === 0 ? (
-                    <span className="text-[11px] text-[#9CA3AF]">None</span>
+                    <span className="text-[11px] text-[#9CA3AF]">Aucun</span>
                   ) : (
-                    tg.riskSignals.map((sig: string) => (
-                      <span
-                        key={sig}
-                        className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium"
-                        style={{ backgroundColor: '#FEE2E2', color: '#991B1B' }}
-                      >
-                        {signalLabels[sig] ?? sig}
-                      </span>
-                    ))
+                    tg.riskSignals.map((sig: string) => {
+                      const sc2 = signalConfig[sig] ?? { label: sig, bg: '#FEE2E2', color: '#991B1B' };
+                      return (
+                        <span
+                          key={sig}
+                          className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium"
+                          style={{ backgroundColor: sc2.bg, color: sc2.color }}
+                        >
+                          {sc2.label}
+                        </span>
+                      );
+                    })
                   )}
                 </div>
 
@@ -337,7 +397,15 @@ export default async function PreventionPage() {
                 </span>
 
                 {/* Trial end */}
-                <span className="text-[12px] text-[#4B5563]">
+                <span
+                  className="text-[12px]"
+                  style={{
+                    color: trialEndDays !== null && trialEndDays <= 3
+                      ? '#DC2626'
+                      : '#4B5563',
+                    fontWeight: trialEndDays !== null && trialEndDays <= 3 ? 600 : 400,
+                  }}
+                >
                   {tg.trialEnd ? formatDate(tg.trialEnd) : '—'}
                 </span>
 
@@ -356,7 +424,7 @@ export default async function PreventionPage() {
                   href={getStripeCustomerUrl(tg.stripeCustomerId, livemode)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  title="View in Stripe Dashboard"
+                  title="Voir dans Stripe Dashboard"
                   className="flex items-center justify-center w-8 h-8 rounded text-[#9CA3AF] hover:bg-[#F3F4F6] hover:text-[#6C63FF] transition-colors"
                 >
                   ↗

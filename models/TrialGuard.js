@@ -5,6 +5,15 @@ const trialGuardSchema = new mongoose.Schema({
   stripeAccountId: { type: String, required: true },
   stripeCustomerId: { type: String, required: true },
   stripeSubscriptionId: { type: String, required: true, unique: true },
+  // Customer readable info
+  customerEmail: { type: String, default: null },
+  customerName: { type: String, default: null },
+  // Card info
+  cardLast4: { type: String, default: null },
+  cardBrand: { type: String, default: null },
+  cardExpMonth: { type: Number, default: null },
+  cardExpYear: { type: Number, default: null },
+  cardFunding: { type: String, default: null },
   paymentIntentId: { type: String, default: null },
   riskSignals: [{ type: String }],
   isHighRisk: { type: Boolean, default: false },
