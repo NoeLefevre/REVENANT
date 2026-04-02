@@ -224,6 +224,25 @@ async function handleSubscriptionUpsert(sub, orgId, stripeAccountId, stripe) {
 
   const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer?.id;
 
+  // Resolve customer email/name — expanded if already an object, otherwise fetch from Stripe
+  let customerEmail = null;
+  let customerName = null;
+  if (typeof sub.customer === 'object' && sub.customer !== null) {
+    customerEmail = sub.customer.email ?? null;
+    customerName = sub.customer.name ?? null;
+  } else if (customerId) {
+    try {
+      const customer = await stripe.customers.retrieve(customerId, { stripeAccount: stripeAccountId });
+      customerEmail = customer.email ?? null;
+      customerName = customer.name ?? null;
+    } catch (err) {
+      console.error('[REVENANT:WEBHOOK] ⚠ Failed to fetch customer', {
+        customerId,
+        error: err.message,
+      });
+    }
+  }
+
   await Subscription.findOneAndUpdate(
     { stripeSubscriptionId: sub.id },
     {
@@ -231,6 +250,8 @@ async function handleSubscriptionUpsert(sub, orgId, stripeAccountId, stripe) {
       stripeAccountId,
       stripeSubscriptionId: sub.id,
       stripeCustomerId: customerId,
+      customerEmail,
+      customerName,
       status: sub.status,
       mrr: computeMRR(sub),
       planId: sub.items?.data?.[0]?.price?.id ?? null,
@@ -248,6 +269,7 @@ async function handleSubscriptionUpsert(sub, orgId, stripeAccountId, stripe) {
     stripeSubscriptionId: sub.id,
     status: sub.status,
     customerId,
+    customerEmail,
   });
 }
 
