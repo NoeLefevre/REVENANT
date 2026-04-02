@@ -89,6 +89,28 @@ export interface OverviewMetrics {
   sequencesCompletingThisWeek: number;
 }
 
+export type TrialGuardStatus = 'monitoring' | 'hold_active' | 'captured' | 'cancelled' | 'failed' | 'expired';
+export type RiskSignal = 'prepaid_card' | 'card_expires_before_trial_end' | 'high_radar_score';
+
+export interface TrialGuard {
+  _id: string;
+  orgId: string;
+  stripeAccountId: string;
+  stripeCustomerId: string;
+  stripeSubscriptionId: string;
+  paymentIntentId: string | null;
+  riskSignals: RiskSignal[];
+  isHighRisk: boolean;
+  status: TrialGuardStatus;
+  preAuthAmount: number; // cents
+  trialEnd?: string;
+  capturedAt?: string;
+  cancelledAt?: string;
+  failedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface HealthScore {
   total: number;
   dimensions: {

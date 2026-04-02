@@ -10,7 +10,10 @@
       "Bash(echo \"exit: $?\")",
       "Bash(ls:*)",
       "Bash(cat:*)",
-      "Bash(grep -E \"REVENANT|\\\\.md$\")"
+      "Bash(grep -E \"REVENANT|\\\\.md$\")",
+      "Bash(node -e \"require\\(''dotenv''\\)\")",
+      "Bash(node -e \"require\\(''''mongoose''''\\)\")",
+      "Bash(node --env-file=.env.local scripts/seed.js)"
     ]
   }
 }

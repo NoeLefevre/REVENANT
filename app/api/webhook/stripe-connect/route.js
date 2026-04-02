@@ -5,11 +5,14 @@ import { classifyDecline } from '@/libs/die';
 import { computeRetryDate } from '@/libs/paydayRetry';
 import { computeRecoveryScore } from '@/libs/recoveryScore';
 import { computeHealthScore } from '@/libs/healthScore';
-import { computeMRR } from '@/libs/stripeConnect';
+import { computeMRR, getClientStripe } from '@/libs/stripeConnect';
+import { decrypt } from '@/libs/encryption';
+import { assessTrialRisk, createPreAuth, capturePreAuth, cancelPreAuth } from '@/libs/smartCharge';
 import StripeConnection from '@/models/StripeConnection';
 import Subscription from '@/models/Subscription';
 import Invoice from '@/models/Invoice';
 import DunningSequence from '@/models/DunningSequence';
+import TrialGuard from '@/models/TrialGuard';
 
 const SEQUENCE_DELAYS_DAYS = {
   SOFT_TEMPORARY: [0, 3, 7, 14, 21],
@@ -67,15 +70,31 @@ export async function POST(request) {
 
       // ── Subscriptions ───────────────────────────────────────────────────────
 
-      case 'customer.subscription.created':
+      case 'customer.subscription.created': {
+        const sub = event.data.object;
+        await handleSubscriptionUpsert(sub, orgId, stripeAccountId, stripe);
+        // SmartCharge: assess trial risk and optionally pre-auth for trialing subs
+        if (sub.status === 'trialing') {
+          await handleTrialGuard(sub, orgId, stripeAccountId, connection);
+        }
+        await refreshHealthScore(orgId);
+        break;
+      }
+
       case 'customer.subscription.updated': {
-        await handleSubscriptionUpsert(event.data.object, orgId, stripeAccountId, stripe);
+        const sub = event.data.object;
+        const previousStatus = event.data.previous_attributes?.status;
+        await handleSubscriptionUpsert(sub, orgId, stripeAccountId, stripe);
+        // SmartCharge: capture pre-auth when trial converts to active
+        if (previousStatus === 'trialing' && sub.status === 'active') {
+          await handleTrialGuardCapture(sub, orgId, stripeAccountId, connection);
+        }
         await refreshHealthScore(orgId);
         break;
       }
 
       case 'customer.subscription.deleted': {
-        await handleSubscriptionDeleted(event.data.object, orgId);
+        await handleSubscriptionDeleted(event.data.object, orgId, stripeAccountId, connection);
         await refreshHealthScore(orgId);
         break;
       }
@@ -273,7 +292,7 @@ async function handleSubscriptionUpsert(sub, orgId, stripeAccountId, stripe) {
   });
 }
 
-async function handleSubscriptionDeleted(sub, orgId) {
+async function handleSubscriptionDeleted(sub, orgId, stripeAccountId, connection) {
   await Subscription.findOneAndUpdate(
     { stripeSubscriptionId: sub.id, orgId },
     { status: 'canceled' }
@@ -289,9 +308,144 @@ async function handleSubscriptionDeleted(sub, orgId) {
     await stopDunningSequence(inv._id, 'subscription_canceled');
   }
 
+  // SmartCharge: cancel pre-auth hold if trial was cancelled
+  const trialGuard = await TrialGuard.findOne({
+    stripeSubscriptionId: sub.id,
+    status: 'hold_active',
+  });
+
+  if (trialGuard?.paymentIntentId) {
+    const clientStripe = getClientStripe(connection.accessToken);
+    const cancelled = await cancelPreAuth(clientStripe, trialGuard.paymentIntentId, stripeAccountId);
+    await TrialGuard.findByIdAndUpdate(trialGuard._id, {
+      status: 'cancelled',
+      cancelledAt: new Date(),
+    });
+    console.log('[REVENANT:SMARTCHARGE] Pre-auth cancelled on subscription delete', {
+      stripeSubscriptionId: sub.id,
+      paymentIntentId: trialGuard.paymentIntentId,
+      cancelled,
+    });
+  }
+
   console.log('[REVENANT:WEBHOOK] Subscription deleted', {
     stripeSubscriptionId: sub.id,
     invoicesStopped: invoices.length,
+  });
+}
+
+// ── SmartCharge handlers ──────────────────────────────────────────────────────
+
+async function handleTrialGuard(sub, orgId, stripeAccountId, connection) {
+  const pmId = sub.default_payment_method;
+
+  // No payment method attached — create monitoring record and bail
+  if (!pmId) {
+    await TrialGuard.create({
+      orgId, stripeAccountId,
+      stripeCustomerId: typeof sub.customer === 'string' ? sub.customer : sub.customer?.id,
+      stripeSubscriptionId: sub.id,
+      paymentIntentId: null,
+      riskSignals: [],
+      isHighRisk: false,
+      status: 'monitoring',
+      trialEnd: sub.trial_end ? new Date(sub.trial_end * 1000) : null,
+    });
+    console.log('[REVENANT:SMARTCHARGE] No payment method — monitoring only', {
+      stripeSubscriptionId: sub.id,
+    });
+    return;
+  }
+
+  const clientStripe = getClientStripe(connection.accessToken);
+
+  // Retrieve the payment method from the connected account
+  let pm;
+  try {
+    pm = await clientStripe.paymentMethods.retrieve(pmId);
+  } catch (err) {
+    console.error('[REVENANT:SMARTCHARGE] Failed to retrieve payment method', {
+      pmId, stripeAccountId, error: err.message,
+    });
+    return;
+  }
+
+  const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer?.id;
+  const { isHighRisk, risks } = assessTrialRisk(pm, sub);
+
+  console.log('[REVENANT:SMARTCHARGE] Risk assessment', {
+    stripeSubscriptionId: sub.id,
+    customerId,
+    isHighRisk,
+    risks,
+  });
+
+  if (!isHighRisk) {
+    await TrialGuard.create({
+      orgId, stripeAccountId,
+      stripeCustomerId: customerId,
+      stripeSubscriptionId: sub.id,
+      paymentIntentId: null,
+      riskSignals: [],
+      isHighRisk: false,
+      status: 'monitoring',
+      trialEnd: sub.trial_end ? new Date(sub.trial_end * 1000) : null,
+    });
+    return;
+  }
+
+  // High-risk: attempt pre-auth
+  const paymentIntent = await createPreAuth(clientStripe, {
+    customerId,
+    paymentMethodId: pmId,
+    stripeAccountId,
+    amount: 100,
+  });
+
+  const status = paymentIntent ? 'hold_active' : 'failed';
+
+  await TrialGuard.create({
+    orgId, stripeAccountId,
+    stripeCustomerId: customerId,
+    stripeSubscriptionId: sub.id,
+    paymentIntentId: paymentIntent?.id ?? null,
+    riskSignals: risks,
+    isHighRisk: true,
+    status,
+    preAuthAmount: 100,
+    trialEnd: sub.trial_end ? new Date(sub.trial_end * 1000) : null,
+    ...(status === 'failed' ? { failedAt: new Date() } : {}),
+  });
+
+  console.log('[REVENANT:SMARTCHARGE] Pre-auth', {
+    stripeSubscriptionId: sub.id,
+    customerId,
+    status,
+    paymentIntentId: paymentIntent?.id ?? null,
+    risks,
+  });
+}
+
+async function handleTrialGuardCapture(sub, orgId, stripeAccountId, connection) {
+  const trialGuard = await TrialGuard.findOne({
+    stripeSubscriptionId: sub.id,
+    status: 'hold_active',
+  });
+
+  if (!trialGuard?.paymentIntentId) return;
+
+  const clientStripe = getClientStripe(connection.accessToken);
+  const success = await capturePreAuth(clientStripe, trialGuard.paymentIntentId, stripeAccountId);
+
+  await TrialGuard.findByIdAndUpdate(trialGuard._id, {
+    status: success ? 'captured' : 'failed',
+    ...(success ? { capturedAt: new Date() } : { failedAt: new Date() }),
+  });
+
+  console.log('[REVENANT:SMARTCHARGE] Pre-auth captured', {
+    stripeSubscriptionId: sub.id,
+    paymentIntentId: trialGuard.paymentIntentId,
+    success,
   });
 }
 

@@ -2,6 +2,10 @@ import { auth } from '@/libs/auth';
 import { redirect } from 'next/navigation';
 import connectMongo from '@/libs/mongoose';
 import SubscriptionModel from '@/models/Subscription';
+import TrialGuardModel from '@/models/TrialGuard';
+import StripeConnectionModel from '@/models/StripeConnection';
+import { getStripeCustomerUrl } from '@/libs/stripeUrls';
+import { TrialGuard, TrialGuardStatus } from '@/types/revenant';
 
 function formatDate(dateStr?: string): string {
   if (!dateStr) return '—';
@@ -64,14 +68,31 @@ export default async function PreventionPage() {
   let expiring14: any[] = [];
   let expiring7: any[] = [];
   let shieldTargets: any[] = [];
+  let trialGuards: any[] = [];
+  let livemode = false;
   let error: string | null = null;
 
   try {
     await connectMongo();
 
-    const allSubs = await (SubscriptionModel as any)
-      .find({ orgId, status: { $in: ['active', 'trialing'] } })
-      .lean();
+    const [allSubs, rawTrialGuards, connection] = await Promise.all([
+      (SubscriptionModel as any).find({ orgId, status: { $in: ['active', 'trialing'] } }).lean(),
+      (TrialGuardModel as any).find({ orgId }).sort({ createdAt: -1 }).limit(50).lean(),
+      (StripeConnectionModel as any).findOne({ userId: orgId }).select('livemode').lean(),
+    ]);
+
+    livemode = connection?.livemode ?? false;
+    trialGuards = rawTrialGuards.map((tg: any) => ({
+      ...tg,
+      _id: tg._id?.toString(),
+      orgId: tg.orgId?.toString(),
+      trialEnd: tg.trialEnd?.toISOString() ?? null,
+      capturedAt: tg.capturedAt?.toISOString() ?? null,
+      cancelledAt: tg.cancelledAt?.toISOString() ?? null,
+      failedAt: tg.failedAt?.toISOString() ?? null,
+      createdAt: tg.createdAt?.toISOString() ?? '',
+      updatedAt: tg.updatedAt?.toISOString() ?? '',
+    }));
 
     // Classify by expiry
     for (const sub of allSubs) {
@@ -97,27 +118,16 @@ export default async function PreventionPage() {
     error = 'Failed to load prevention data. Please try again.';
   }
 
+  const trialsActive   = trialGuards.filter((tg: any) => tg.status === 'monitoring' || tg.status === 'hold_active').length;
+  const trialsHighRisk = trialGuards.filter((tg: any) => tg.isHighRisk).length;
+  const trialsHold     = trialGuards.filter((tg: any) => tg.status === 'hold_active').length;
+  const trialsFailed   = trialGuards.filter((tg: any) => tg.status === 'failed').length;
+
   const stats = [
-    {
-      label: 'Expiring in 30 days',
-      value: expiring30.length,
-      color: '#D97706',
-    },
-    {
-      label: 'Expiring in 14 days',
-      value: expiring14.length,
-      color: '#C2410C',
-    },
-    {
-      label: 'Expiring in 7 days',
-      value: expiring7.length,
-      color: '#DC2626',
-    },
-    {
-      label: 'Shield targets',
-      value: shieldTargets.length,
-      color: '#6C63FF',
-    },
+    { label: 'Expiring in 30 days', value: expiring30.length, color: '#D97706' },
+    { label: 'Expiring in 14 days', value: expiring14.length, color: '#C2410C' },
+    { label: 'Expiring in 7 days',  value: expiring7.length,  color: '#DC2626' },
+    { label: 'Shield targets',      value: shieldTargets.length, color: '#6C63FF' },
   ];
 
   return (
@@ -208,6 +218,149 @@ export default async function PreventionPage() {
                 <button className="text-[12px] font-medium px-3 py-1.5 rounded-lg border border-[#E5E7EB] text-[#4B5563] hover:bg-[#F7F5F2] transition-colors">
                   Send email
                 </button>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* SmartCharge — Trial Guard section */}
+      <div
+        className="bg-white rounded-lg overflow-hidden"
+        style={{ boxShadow: '0 1px 3px #00000010', border: '1px solid #F0EDE8' }}
+      >
+        {/* Section header + counters */}
+        <div className="px-4 py-3 border-b border-[#E5E7EB] flex items-center justify-between">
+          <div>
+            <h2 className="text-[15px] font-semibold text-[#1A1A1A]">SmartCharge — Trial Guard</h2>
+            <p className="text-[12px] text-[#4B5563]">
+              Pre-authorization holds on high-risk trial subscriptions
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-[12px] text-[#4B5563]">
+              <span className="font-semibold text-[#1A1A1A]">{trialsActive}</span> active
+            </span>
+            <span className="text-[12px] text-[#4B5563]">
+              <span className="font-semibold" style={{ color: trialsHighRisk > 0 ? '#DC2626' : '#1A1A1A' }}>{trialsHighRisk}</span> high-risk
+            </span>
+            <span className="text-[12px] text-[#4B5563]">
+              <span className="font-semibold" style={{ color: trialsHold > 0 ? '#6C63FF' : '#1A1A1A' }}>{trialsHold}</span> on hold
+            </span>
+            {trialsFailed > 0 && (
+              <span className="text-[12px] text-[#DC2626]">
+                <span className="font-semibold">{trialsFailed}</span> failed
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Table header */}
+        <div
+          className="grid items-center px-4 h-9"
+          style={{
+            backgroundColor: '#F7F5F2',
+            borderBottom: '1px solid #E5E7EB',
+            gridTemplateColumns: '1fr 10rem 6rem 7rem 6rem 2.5rem',
+          }}
+        >
+          {['CUSTOMER', 'RISK SIGNALS', 'PRE-AUTH', 'TRIAL ENDS', 'STATUS', ''].map((col) => (
+            <span key={col} className="text-[10px] font-medium uppercase tracking-[0.8px] text-[#9CA3AF]">
+              {col}
+            </span>
+          ))}
+        </div>
+
+        {trialGuards.length === 0 ? (
+          <div className="flex items-center justify-center py-10 text-sm text-[#9CA3AF]">
+            No trial subscriptions tracked yet
+          </div>
+        ) : (
+          trialGuards.map((tg: any) => {
+            const statusConfig: Record<string, { bg: string; text: string; label: string }> = {
+              monitoring:  { bg: '#F3F4F6', text: '#6B7280', label: 'Monitoring' },
+              hold_active: { bg: '#EDE9FE', text: '#6C63FF', label: 'Hold active' },
+              captured:    { bg: '#DCFCE7', text: '#15803D', label: 'Captured' },
+              cancelled:   { bg: '#F3F4F6', text: '#6B7280', label: 'Cancelled' },
+              failed:      { bg: '#FEE2E2', text: '#DC2626', label: 'Failed' },
+              expired:     { bg: '#FEF9C3', text: '#854D0E', label: 'Expired' },
+            };
+            const sc = statusConfig[tg.status] ?? statusConfig.monitoring;
+
+            const signalLabels: Record<string, string> = {
+              prepaid_card: 'Prepaid',
+              card_expires_before_trial_end: 'Card exp.',
+              high_radar_score: 'Radar',
+            };
+
+            return (
+              <div
+                key={tg._id}
+                className="grid items-center px-4 h-14 border-b border-[#E5E7EB] last:border-b-0 hover:bg-[#FAFAFA] transition-colors"
+                style={{
+                  gridTemplateColumns: '1fr 10rem 6rem 7rem 6rem 2.5rem',
+                  borderLeft: tg.isHighRisk ? '2px solid #DC2626' : undefined,
+                }}
+              >
+                {/* Customer */}
+                <div className="flex flex-col min-w-0 pr-2">
+                  <span className="text-[13px] font-medium text-[#1A1A1A] truncate">
+                    {tg.stripeCustomerId}
+                  </span>
+                  <span className="text-[11px] font-mono text-[#9CA3AF] truncate">
+                    {tg.stripeSubscriptionId}
+                  </span>
+                </div>
+
+                {/* Risk signals */}
+                <div className="flex items-center gap-1 flex-wrap">
+                  {tg.riskSignals.length === 0 ? (
+                    <span className="text-[11px] text-[#9CA3AF]">None</span>
+                  ) : (
+                    tg.riskSignals.map((sig: string) => (
+                      <span
+                        key={sig}
+                        className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium"
+                        style={{ backgroundColor: '#FEE2E2', color: '#991B1B' }}
+                      >
+                        {signalLabels[sig] ?? sig}
+                      </span>
+                    ))
+                  )}
+                </div>
+
+                {/* Pre-auth amount */}
+                <span className="text-[12px] text-[#4B5563]">
+                  {tg.status === 'hold_active' || tg.status === 'captured'
+                    ? `$${((tg.preAuthAmount ?? 100) / 100).toFixed(2)}`
+                    : '—'}
+                </span>
+
+                {/* Trial end */}
+                <span className="text-[12px] text-[#4B5563]">
+                  {tg.trialEnd ? formatDate(tg.trialEnd) : '—'}
+                </span>
+
+                {/* Status badge */}
+                <div>
+                  <span
+                    className="inline-flex items-center rounded px-2 py-0.5 text-[11px] font-medium"
+                    style={{ backgroundColor: sc.bg, color: sc.text }}
+                  >
+                    {sc.label}
+                  </span>
+                </div>
+
+                {/* Link to Stripe */}
+                <a
+                  href={getStripeCustomerUrl(tg.stripeCustomerId, livemode)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="View in Stripe Dashboard"
+                  className="flex items-center justify-center w-8 h-8 rounded text-[#9CA3AF] hover:bg-[#F3F4F6] hover:text-[#6C63FF] transition-colors"
+                >
+                  ↗
+                </a>
               </div>
             );
           })
