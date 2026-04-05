@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { auth } from '@/libs/auth';
 import { redirect } from 'next/navigation';
 import connectMongo from '@/libs/mongoose';
@@ -138,7 +139,7 @@ function StatCard({
   label: string;
   value: string | number;
   sub: string;
-  icon: React.ReactNode;
+  icon: ReactNode;
   color: string;
 }) {
   return (
@@ -228,7 +229,7 @@ function TrialStatusBadge({ status }: { status: string }) {
 function EmptyState({
   icon, title, body,
 }: {
-  icon: React.ReactNode;
+  icon: ReactNode;
   title: string;
   body: string;
 }) {
