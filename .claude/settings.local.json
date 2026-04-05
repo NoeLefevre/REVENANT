@@ -15,7 +15,8 @@
       "Bash(node -e \"require\\(''''mongoose''''\\)\")",
       "Bash(node --env-file=.env.local scripts/seed.js)",
       "Bash(node --input-type=module --experimental-vm-modules)",
-      "Bash(npx next:*)"
+      "Bash(npx next:*)",
+      "Bash(node -e \"const p = require\\('./package.json'\\); console.log\\(p.dependencies['lucide-react'] || 'NOT INSTALLED'\\)\")"
     ]
   }
 }
