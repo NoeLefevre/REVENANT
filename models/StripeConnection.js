@@ -32,6 +32,13 @@ const stripeConnectionSchema = new mongoose.Schema({
   },
   // Onboarding nurture email tracking (steps 0-3 = emails 1-4)
   onboardingEmailsSent: { type: [Number], default: [] },
+  // Feature settings — all have opinionated defaults, nothing is required to configure
+  settings: {
+    trialGuard: {
+      enabled:        { type: Boolean, default: true },
+      radarThreshold: { type: Number,  default: 65   },
+    },
+  },
 }, { timestamps: true });
 
 // Used in cron/prevention: find({ syncStatus: 'done' })

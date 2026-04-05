@@ -5,6 +5,7 @@ import InvoiceModel from '@/models/Invoice';
 import SubscriptionModel from '@/models/Subscription';
 import DunningSequenceModel from '@/models/DunningSequence';
 import StripeConnectionModel from '@/models/StripeConnection';
+import TrialGuardModel from '@/models/TrialGuard';
 import UserModel from '@/models/User';
 import AtRiskBanner from '@/components/revenant/AtRiskBanner';
 import MetricCard from '@/components/revenant/MetricCard';
@@ -81,6 +82,8 @@ export default async function OverviewPage() {
   let protectedMrrLastMonth = 0;
   let activeSequences = 0;
   let sequencesCompletingThisWeek = 0;
+  let smartChargeDetected = 0;
+  let smartChargeCaptured = 0;
   let hasAccess = false;
   let error: string | null = null;
 
@@ -141,6 +144,18 @@ export default async function OverviewPage() {
         status: 'active',
         steps: { $elemMatch: { scheduledAt: { $lte: getEndOfThisWeek() }, sentAt: { $exists: false } } },
       });
+
+      // SmartCharge: high-risk trials detected + captured this month
+      const [sgDetected, sgCaptured] = await Promise.all([
+        (TrialGuardModel as any).countDocuments({
+          orgId, isHighRisk: true, createdAt: { $gte: getStartOfMonth() },
+        }),
+        (TrialGuardModel as any).countDocuments({
+          orgId, status: 'captured', createdAt: { $gte: getStartOfMonth() },
+        }),
+      ]);
+      smartChargeDetected = sgDetected;
+      smartChargeCaptured = sgCaptured;
     }
   } catch (err) {
     console.error('[OverviewPage] Error:', err);
@@ -264,7 +279,7 @@ export default async function OverviewPage() {
         ) : null}
 
         {/* Metrics row */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
           <MetricCard
             label="Protected MRR this month"
             value={formatCurrency(protectedMrr)}
@@ -285,6 +300,13 @@ export default async function OverviewPage() {
             delta={`${sequencesCompletingThisWeek} completing this week`}
             color="gray"
             icon="mail"
+          />
+          <MetricCard
+            label="SmartCharge — this month"
+            value={String(smartChargeDetected)}
+            delta={`${smartChargeCaptured} converted to charge`}
+            color="orange"
+            icon="lock"
           />
         </div>
 

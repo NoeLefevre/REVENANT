@@ -7,6 +7,33 @@ import StripeConnectionModel from '@/models/StripeConnection';
 import { getStripeCustomerUrl } from '@/libs/stripeUrls';
 import { TrialGuard, TrialGuardStatus } from '@/types/revenant';
 
+/** 0–100 trust score for a trial based on its risk signals (lower = riskier). */
+function computeTrialScore(riskSignals: string[]): number {
+  const weights: Record<string, number> = {
+    prepaid_card:                  40,
+    card_expires_before_trial_end: 35,
+    high_radar_score:              25,
+  };
+  const deduction = riskSignals.reduce((sum, sig) => sum + (weights[sig] ?? 10), 0);
+  return Math.max(0, 100 - deduction);
+}
+
+function TrialScoreBadge({ signals }: { signals: string[] }) {
+  if (signals.length === 0) return null;
+  const score = computeTrialScore(signals);
+  const bg    = score <= 25 ? '#FEE2E2' : score <= 60 ? '#FEF3C7' : '#FEF9C3';
+  const color = score <= 25 ? '#991B1B' : score <= 60 ? '#92400E' : '#854D0E';
+  return (
+    <span
+      className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold"
+      style={{ backgroundColor: bg, color }}
+      title="Trust score (0 = max risk, 100 = clean)"
+    >
+      {score}/100
+    </span>
+  );
+}
+
 function formatDate(dateStr?: string): string {
   if (!dateStr) return '—';
   return new Date(dateStr).toLocaleDateString('en-US', {
@@ -369,23 +396,28 @@ export default async function PreventionPage() {
                   </div>
                 </div>
 
-                {/* Risk signals */}
-                <div className="flex items-center gap-1 flex-wrap">
-                  {tg.riskSignals.length === 0 ? (
-                    <span className="text-[11px] text-[#9CA3AF]">Aucun</span>
-                  ) : (
-                    tg.riskSignals.map((sig: string) => {
-                      const sc2 = signalConfig[sig] ?? { label: sig, bg: '#FEE2E2', color: '#991B1B' };
-                      return (
-                        <span
-                          key={sig}
-                          className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium"
-                          style={{ backgroundColor: sc2.bg, color: sc2.color }}
-                        >
-                          {sc2.label}
-                        </span>
-                      );
-                    })
+                {/* Risk signals + trust score */}
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-1 flex-wrap">
+                    {tg.riskSignals.length === 0 ? (
+                      <span className="text-[11px] text-[#9CA3AF]">Aucun</span>
+                    ) : (
+                      tg.riskSignals.map((sig: string) => {
+                        const sc2 = signalConfig[sig] ?? { label: sig, bg: '#FEE2E2', color: '#991B1B' };
+                        return (
+                          <span
+                            key={sig}
+                            className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium"
+                            style={{ backgroundColor: sc2.bg, color: sc2.color }}
+                          >
+                            {sc2.label}
+                          </span>
+                        );
+                      })
+                    )}
+                  </div>
+                  {tg.riskSignals.length > 0 && (
+                    <TrialScoreBadge signals={tg.riskSignals} />
                   )}
                 </div>
 

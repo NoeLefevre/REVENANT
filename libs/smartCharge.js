@@ -9,11 +9,12 @@
  * Evaluates the fraud/churn risk of a trial based on the payment method
  * and subscription object from Stripe.
  *
- * @param {object} pm  - Stripe PaymentMethod object (expanded)
- * @param {object} sub - Stripe Subscription object
+ * @param {object} pm             - Stripe PaymentMethod object (expanded)
+ * @param {object} sub            - Stripe Subscription object
+ * @param {number} radarThreshold - Radar score above which a card is flagged (default: 65)
  * @returns {{ isHighRisk: boolean, risks: string[] }}
  */
-export function assessTrialRisk(pm, sub) {
+export function assessTrialRisk(pm, sub, radarThreshold = 65) {
   const risks = [];
 
   // Signal 1 — Prepaid card (high chargeback / no funds risk)
@@ -32,7 +33,7 @@ export function assessTrialRisk(pm, sub) {
 
   // Signal 3 — High Stripe Radar risk score
   const radarScore = pm.card?.checks?.radar_risk_score;
-  if (radarScore != null && radarScore >= 65) {
+  if (radarScore != null && radarScore >= radarThreshold) {
     risks.push('high_radar_score');
   }
 
@@ -40,6 +41,28 @@ export function assessTrialRisk(pm, sub) {
     isHighRisk: risks.length > 0,
     risks,
   };
+}
+
+/**
+ * Computes a 0–100 trust score for a trial based on its risk signals.
+ * 100 = clean, 0 = maximum risk.
+ *
+ * Weights (cumulative deductions from 100):
+ *   prepaid_card                  → −40
+ *   card_expires_before_trial_end → −35
+ *   high_radar_score              → −25
+ *
+ * @param {string[]} riskSignals - Array of risk signal keys
+ * @returns {number} Score between 0 and 100
+ */
+export function computeTrialScore(riskSignals) {
+  const weights = {
+    prepaid_card:                  40,
+    card_expires_before_trial_end: 35,
+    high_radar_score:              25,
+  };
+  const deduction = riskSignals.reduce((sum, sig) => sum + (weights[sig] ?? 10), 0);
+  return Math.max(0, 100 - deduction);
 }
 
 /**

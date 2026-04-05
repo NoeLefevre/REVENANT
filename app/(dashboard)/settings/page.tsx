@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import connectMongo from '@/libs/mongoose';
 import StripeConnectionModel from '@/models/StripeConnection';
 import DisconnectStripeButton from '@/components/DisconnectStripeButton';
+import TrialGuardSettings from '@/components/revenant/TrialGuardSettings';
 
 interface PageProps {
   searchParams: Promise<{
@@ -183,10 +184,13 @@ export default async function SettingsPage({ searchParams }: PageProps) {
                 </span>
                 <div className="flex flex-wrap gap-1.5">
                   {[
+                    'customer.subscription.created',
+                    'customer.subscription.updated',
+                    'customer.subscription.deleted',
                     'invoice.payment_failed',
                     'invoice.payment_succeeded',
-                    'customer.subscription.updated',
                     'payment_method.updated',
+                    'payment_method.attached',
                   ].map((evt) => (
                     <span
                       key={evt}
@@ -267,6 +271,24 @@ export default async function SettingsPage({ searchParams }: PageProps) {
             <p className="text-[12px] text-[#9CA3AF]">
               Custom templates and per-customer frequency controls coming soon.
             </p>
+          </div>
+        )}
+
+        {section === 'emails' && (
+          <div
+            className="bg-white rounded-lg p-6 flex flex-col gap-5"
+            style={{ boxShadow: '0 1px 3px #00000010', border: '1px solid #F0EDE8' }}
+          >
+            <div>
+              <h2 className="text-[15px] font-semibold text-[#1A1A1A]">Trial Guard</h2>
+              <p className="text-[12px] text-[#4B5563] mt-0.5">
+                Control how REVENANT handles high-risk trial signups.
+              </p>
+            </div>
+            <TrialGuardSettings
+              initialEnabled={stripeConnection?.settings?.trialGuard?.enabled !== false}
+              initialThreshold={stripeConnection?.settings?.trialGuard?.radarThreshold ?? 65}
+            />
           </div>
         )}
 

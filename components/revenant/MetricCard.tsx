@@ -2,8 +2,8 @@ interface MetricCardProps {
   label: string;
   value: string;
   delta: string;
-  color: 'green' | 'purple' | 'gray';
-  icon: 'shield' | 'trending-up' | 'mail';
+  color: 'green' | 'purple' | 'gray' | 'orange';
+  icon: 'shield' | 'trending-up' | 'mail' | 'lock';
 }
 
 const colorMap = {
@@ -21,6 +21,11 @@ const colorMap = {
     value: 'text-[#1A1A1A]',
     delta: 'text-[#4B5563]',
     icon: '#9CA3AF',
+  },
+  orange: {
+    value: 'text-[#D97706]',
+    delta: 'text-[#92400E]',
+    icon: '#D97706',
   },
 };
 
@@ -51,9 +56,19 @@ function MailIcon({ color }: { color: string }) {
   );
 }
 
+function LockIcon({ color }: { color: string }) {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  );
+}
+
 function Icon({ name, color }: { name: MetricCardProps['icon']; color: string }) {
   if (name === 'shield') return <ShieldIcon color={color} />;
   if (name === 'trending-up') return <TrendingUpIcon color={color} />;
+  if (name === 'lock') return <LockIcon color={color} />;
   return <MailIcon color={color} />;
 }
 
