@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { Shield, TrendingUp, Mail } from 'lucide-react';
 import AtRiskBanner from '@/components/revenant/AtRiskBanner';
 import MetricCard from '@/components/revenant/MetricCard';
 import WarRoomBoard from '@/components/revenant/WarRoomBoard';
@@ -332,22 +333,22 @@ export default function DemoPage() {
                 label="Protected MRR this month"
                 value={formatCurrency(MOCK_METRICS.protectedMrr)}
                 delta={`↑ ${formatCurrency(Math.max(0, protectedDelta))} vs last month`}
-                color="green"
-                icon="shield"
+                borderColor="#16A34A"
+                icon={<Shield size={18} />}
               />
               <MetricCard
                 label="Recovered MRR this month"
                 value={formatCurrency(MOCK_METRICS.recoveredMrr)}
                 delta={`↑ ${formatCurrency(Math.max(0, recoveredDelta))} vs last month`}
-                color="purple"
-                icon="trending-up"
+                borderColor="#6C63FF"
+                icon={<TrendingUp size={18} />}
               />
               <MetricCard
                 label="Active sequences"
                 value={String(MOCK_METRICS.activeSequences)}
                 delta={`${MOCK_METRICS.sequencesCompletingThisWeek} completing this week`}
-                color="gray"
-                icon="mail"
+                borderColor="#D97706"
+                icon={<Mail size={18} />}
               />
             </div>
 
