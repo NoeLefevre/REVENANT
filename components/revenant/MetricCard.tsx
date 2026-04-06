@@ -1,94 +1,34 @@
+import type { ReactNode } from 'react';
+
 interface MetricCardProps {
   label: string;
   value: string;
   delta: string;
-  color: 'green' | 'purple' | 'gray' | 'orange';
-  icon: 'shield' | 'trending-up' | 'mail' | 'lock';
+  borderColor: string;
+  icon: ReactNode;
 }
 
-const colorMap = {
-  green: {
-    value: 'text-[#16A34A]',
-    delta: 'text-[#16A34A]',
-    icon: '#16A34A',
-  },
-  purple: {
-    value: 'text-[#6C63FF]',
-    delta: 'text-[#6C63FF]',
-    icon: '#6C63FF',
-  },
-  gray: {
-    value: 'text-[#1A1A1A]',
-    delta: 'text-[#4B5563]',
-    icon: '#9CA3AF',
-  },
-  orange: {
-    value: 'text-[#D97706]',
-    delta: 'text-[#92400E]',
-    icon: '#D97706',
-  },
-};
-
-function ShieldIcon({ color }: { color: string }) {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-      <polyline points="9 12 11 14 15 10" />
-    </svg>
-  );
-}
-
-function TrendingUpIcon({ color }: { color: string }) {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
-      <polyline points="17 6 23 6 23 12" />
-    </svg>
-  );
-}
-
-function MailIcon({ color }: { color: string }) {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2" y="4" width="20" height="16" rx="2" />
-      <polyline points="2,4 12,13 22,4" />
-    </svg>
-  );
-}
-
-function LockIcon({ color }: { color: string }) {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-    </svg>
-  );
-}
-
-function Icon({ name, color }: { name: MetricCardProps['icon']; color: string }) {
-  if (name === 'shield') return <ShieldIcon color={color} />;
-  if (name === 'trending-up') return <TrendingUpIcon color={color} />;
-  if (name === 'lock') return <LockIcon color={color} />;
-  return <MailIcon color={color} />;
-}
-
-export default function MetricCard({ label, value, delta, color, icon }: MetricCardProps) {
-  const colors = colorMap[color];
-
+export default function MetricCard({ label, value, delta, borderColor, icon }: MetricCardProps) {
   return (
     <div
-      className="bg-white rounded-lg p-6 flex flex-col gap-3"
+      className="bg-white rounded-xl p-5 flex flex-col gap-3"
       style={{
         boxShadow: '0 1px 3px #00000010',
         border: '1px solid #F0EDE8',
+        borderLeft: `4px solid ${borderColor}`,
       }}
     >
       <div className="flex items-center justify-between">
         <span className="text-[13px] font-medium text-[#4B5563] leading-tight">{label}</span>
-        <Icon name={icon} color={colors.icon} />
+        <div style={{ color: borderColor, opacity: 0.8 }}>{icon}</div>
       </div>
-      <div className={`text-[28px] font-bold leading-none ${colors.value}`}>{value}</div>
-      <div className={`text-[13px] ${colors.delta}`}>{delta}</div>
+      <div
+        className="text-[28px] font-bold leading-none"
+        style={{ color: borderColor }}
+      >
+        {value}
+      </div>
+      <div className="text-[13px] text-[#4B5563]">{delta}</div>
     </div>
   );
 }

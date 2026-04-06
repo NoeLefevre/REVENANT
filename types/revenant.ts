@@ -113,6 +113,7 @@ export interface TrialGuard {
 
 export interface HealthScore {
   total: number;
+  computedAt?: string;
   dimensions: {
     expiryRisk: number;
     failureRate: number;

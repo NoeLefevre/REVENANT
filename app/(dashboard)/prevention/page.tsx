@@ -614,7 +614,7 @@ export default async function PreventionPage({ searchParams }: PageProps) {
                       </div>
 
                       {/* Risk signals + trust score */}
-                      <div className="flex flex-col gap-1">
+                      <div className="flex flex-col gap-1 items-start">
                         {(tg.riskSignals ?? []).length === 0 ? (
                           <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-[#DCFCE7] text-[#15803D]">
                             Low Risk ✓
@@ -675,7 +675,7 @@ export default async function PreventionPage({ searchParams }: PageProps) {
                       </div>
 
                       {/* Status */}
-                      <TrialStatusBadge status={tg.status} />
+                      <div><TrialStatusBadge status={tg.status} /></div>
 
                       {/* Stripe link */}
                       <a
@@ -780,8 +780,8 @@ export default async function PreventionPage({ searchParams }: PageProps) {
                     </span>
 
                     {/* Subscription status */}
-                    <span
-                      className="inline-flex items-center rounded px-2 py-0.5 text-[11px] font-medium self-center"
+                    <div><span
+                      className="inline-flex items-center rounded px-2 py-0.5 text-[11px] font-medium"
                       style={{
                         backgroundColor: sub.status === 'active'   ? '#DCFCE7'
                           : sub.status === 'trialing' ? '#EDE9FE'
@@ -794,7 +794,7 @@ export default async function PreventionPage({ searchParams }: PageProps) {
                       {sub.status === 'active'   ? 'Active'
                         : sub.status === 'trialing' ? 'Trialing'
                         : 'At risk'}
-                    </span>
+                    </span></div>
 
                     {/* Stripe link */}
                     <a
