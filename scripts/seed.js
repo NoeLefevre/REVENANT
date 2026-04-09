@@ -1,6 +1,6 @@
 const Stripe = require('stripe')
 const stripe = Stripe('sk_test_51TEEu0RqQO9pAco7k9uGLTUxMQuQT4RD3REyWa84igWBZHl5K8tKNpRDuLqMDuwsTDEHBnZhnM9UirD8nNNfnmqq00soszHv75')
-const CONNECTED_ACCOUNT_ID = 'acct_1TK1RMC5xjM7jYS2'
+const CONNECTED_ACCOUNT_ID = 'acct_1TKOemBmSgAw5GP7'
 const opts = { stripeAccount: CONNECTED_ACCOUNT_ID }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))

@@ -96,11 +96,6 @@ const navItems: NavItem[] = [
     label: 'Trial Guard',
     icon: null,
   },
-  {
-    href: '/overview',
-    label: 'Overview',
-    icon: null,
-  },
 ];
 
 function NavIcon({ href, active }: { href: string; active: boolean }) {

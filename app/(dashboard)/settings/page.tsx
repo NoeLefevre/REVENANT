@@ -38,9 +38,6 @@ export default async function SettingsPage({ searchParams }: PageProps) {
   const navItems = [
     { key: 'stripe', label: 'Stripe' },
     { key: 'trial-guard', label: 'Trial Guard' },
-    { key: 'emails', label: 'Emails' },
-    { key: 'slack', label: 'Slack' },
-    { key: 'billing', label: 'Billing' },
   ];
 
   return (
@@ -233,48 +230,6 @@ export default async function SettingsPage({ searchParams }: PageProps) {
           </>
         )}
 
-        {section === 'emails' && (
-          <div
-            className="bg-white rounded-lg p-6 flex flex-col gap-5"
-            style={{ boxShadow: '0 1px 3px #00000010', border: '1px solid #F0EDE8' }}
-          >
-            <div>
-              <h2 className="text-[15px] font-semibold text-[#1A1A1A]">Email Settings</h2>
-              <p className="text-[12px] text-[#4B5563] mt-0.5">
-                Configure the emails REVENANT sends to your customers.
-              </p>
-            </div>
-            <div className="flex flex-col gap-3">
-              {[
-                { icon: '📬', label: 'Card expiry alerts', sub: 'Notify customers 30, 14, and 7 days before their card expires' },
-                { icon: '🔁', label: 'Dunning sequences', sub: 'Automated recovery emails for failed payments' },
-                { icon: '🛡️', label: 'Chargeback Shield', sub: 'Pre-debit notice for high-risk customers' },
-              ].map((item) => (
-                <div
-                  key={item.label}
-                  className="flex items-start gap-3 p-4 rounded-lg"
-                  style={{ backgroundColor: '#F7F5F2' }}
-                >
-                  <span className="text-xl leading-none mt-0.5">{item.icon}</span>
-                  <div>
-                    <p className="text-[13px] font-medium text-[#1A1A1A]">{item.label}</p>
-                    <p className="text-[12px] text-[#9CA3AF]">{item.sub}</p>
-                  </div>
-                  <span
-                    className="ml-auto flex-shrink-0 text-[11px] font-medium px-2 py-0.5 rounded"
-                    style={{ backgroundColor: '#DCFCE7', color: '#15803D' }}
-                  >
-                    Active
-                  </span>
-                </div>
-              ))}
-            </div>
-            <p className="text-[12px] text-[#9CA3AF]">
-              Custom templates and per-customer frequency controls coming soon.
-            </p>
-          </div>
-        )}
-
         {section === 'trial-guard' && (
           <div
             className="bg-white rounded-lg p-6 flex flex-col gap-5"
@@ -289,76 +244,6 @@ export default async function SettingsPage({ searchParams }: PageProps) {
             <TrialGuardModeToggle
               initialMode={stripeConnection?.trialGuardMode ?? 'universal'}
             />
-          </div>
-        )}
-
-        {section === 'slack' && (
-          <div
-            className="bg-white rounded-lg p-6 flex flex-col gap-5"
-            style={{ boxShadow: '0 1px 3px #00000010', border: '1px solid #F0EDE8' }}
-          >
-            <div>
-              <h2 className="text-[15px] font-semibold text-[#1A1A1A]">Slack Integration</h2>
-              <p className="text-[12px] text-[#4B5563] mt-0.5">
-                Get real-time recovery alerts in your Slack workspace.
-              </p>
-            </div>
-            <div className="flex flex-col gap-3">
-              {[
-                { label: 'Recovery alerts', sub: 'Notify when a failed invoice is recovered' },
-                { label: 'At-risk digest', sub: 'Daily summary of invoices entering dunning sequences' },
-                { label: 'Card expiry warnings', sub: 'Alert when high-value customers have expiring cards' },
-              ].map((item) => (
-                <div
-                  key={item.label}
-                  className="flex items-center justify-between p-4 rounded-lg"
-                  style={{ backgroundColor: '#F7F5F2' }}
-                >
-                  <div>
-                    <p className="text-[13px] font-medium text-[#1A1A1A]">{item.label}</p>
-                    <p className="text-[12px] text-[#9CA3AF]">{item.sub}</p>
-                  </div>
-                  <span
-                    className="text-[11px] font-medium px-2 py-0.5 rounded"
-                    style={{ backgroundColor: '#F3F4F6', color: '#6B7280' }}
-                  >
-                    Coming soon
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {section === 'billing' && (
-          <div
-            className="bg-white rounded-lg p-6 flex flex-col gap-5"
-            style={{ boxShadow: '0 1px 3px #00000010', border: '1px solid #F0EDE8' }}
-          >
-            <div>
-              <h2 className="text-[15px] font-semibold text-[#1A1A1A]">Billing</h2>
-              <p className="text-[12px] text-[#4B5563] mt-0.5">
-                Manage your REVENANT subscription and invoices.
-              </p>
-            </div>
-            <div
-              className="flex items-center justify-between p-4 rounded-lg"
-              style={{ backgroundColor: '#F7F5F2' }}
-            >
-              <div>
-                <p className="text-[13px] font-medium text-[#1A1A1A]">Subscription & invoices</p>
-                <p className="text-[12px] text-[#9CA3AF]">
-                  View your plan, update payment method, and download invoices
-                </p>
-              </div>
-              <a
-                href="/api/stripe/create-portal"
-                className="flex-shrink-0 px-4 py-2 rounded-lg text-white text-[13px] font-medium hover:opacity-90 transition-opacity"
-                style={{ backgroundColor: '#6C63FF' }}
-              >
-                Manage billing →
-              </a>
-            </div>
           </div>
         )}
       </div>
