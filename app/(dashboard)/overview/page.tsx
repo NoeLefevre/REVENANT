@@ -6,7 +6,6 @@ import InvoiceModel from '@/models/Invoice';
 import SubscriptionModel from '@/models/Subscription';
 import DunningSequenceModel from '@/models/DunningSequence';
 import StripeConnectionModel from '@/models/StripeConnection';
-import TrialGuardModel from '@/models/TrialGuard';
 import EmailEventModel from '@/models/EmailEvent';
 import UserModel from '@/models/User';
 import AtRiskBanner from '@/components/revenant/AtRiskBanner';
@@ -169,11 +168,11 @@ export default async function OverviewPage() {
       });
 
       const [sgDetected, sgCaptured] = await Promise.all([
-        (TrialGuardModel as any).countDocuments({
-          orgId, isHighRisk: true, createdAt: { $gte: startOfMonth },
+        (SubscriptionModel as any).countDocuments({
+          orgId, trialGuardEnabled: true, createdAt: { $gte: startOfMonth },
         }),
-        (TrialGuardModel as any).countDocuments({
-          orgId, status: 'captured', createdAt: { $gte: startOfMonth },
+        (SubscriptionModel as any).countDocuments({
+          orgId, paymentIntentStatus: 'captured', createdAt: { $gte: startOfMonth },
         }),
       ]);
       smartChargeDetected = sgDetected;
@@ -196,8 +195,8 @@ export default async function OverviewPage() {
           .sort({ sentAt: -1 })
           .limit(5)
           .lean(),
-        (TrialGuardModel as any)
-          .find({ orgId, isHighRisk: true })
+        (SubscriptionModel as any)
+          .find({ orgId, trialGuardEnabled: true, riskSignals: { $not: { $size: 0 } } })
           .sort({ createdAt: -1 })
           .limit(4)
           .lean(),
@@ -238,14 +237,14 @@ export default async function OverviewPage() {
         });
       }
       for (const tg of recentTrials) {
-        const isCaptured = tg.status === 'captured';
+        const isCaptured = tg.paymentIntentStatus === 'captured';
         events.push({
           id: `tg-${tg._id}`,
           type: isCaptured ? 'trial_captured' : 'trial_flagged',
           description: isCaptured
-            ? `High-risk trial captured — ${formatCurrency(tg.preAuthAmount ?? 0)}`
+            ? `High-risk trial captured — ${formatCurrency(tg.holdAmount ?? 0)}`
             : `High-risk trial flagged`,
-          timestamp: (isCaptured ? tg.capturedAt : tg.createdAt)?.toISOString() ?? '',
+          timestamp: tg.updatedAt?.toISOString() ?? tg.createdAt?.toISOString() ?? '',
         });
       }
 
