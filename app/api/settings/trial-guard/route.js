@@ -4,10 +4,11 @@ import connectMongo from '@/libs/mongoose';
 import StripeConnection from '@/models/StripeConnection';
 
 /**
- * POST /api/settings/trial-guard
- * Saves Trial Guard settings (enabled toggle + radarThreshold) for the current user.
+ * PATCH /api/settings/trial-guard
+ * Updates Trial Guard mode (universal/selective) for the current user.
+ * Brief section 10: single toggle — Universal (default) or Selective.
  */
-export async function POST(req) {
+export async function PATCH(req) {
   try {
     const session = await auth();
     if (!session?.user?.id) {
@@ -15,19 +16,11 @@ export async function POST(req) {
     }
 
     const body = await req.json();
-    const { enabled, radarThreshold } = body;
+    const { trialGuardMode } = body;
 
-    if (typeof enabled !== 'boolean') {
-      return NextResponse.json({ error: 'enabled must be a boolean' }, { status: 400 });
-    }
-    if (
-      typeof radarThreshold !== 'number' ||
-      radarThreshold < 0 ||
-      radarThreshold > 100 ||
-      !Number.isInteger(radarThreshold)
-    ) {
+    if (trialGuardMode !== 'universal' && trialGuardMode !== 'selective') {
       return NextResponse.json(
-        { error: 'radarThreshold must be an integer between 0 and 100' },
+        { error: 'trialGuardMode must be "universal" or "selective"' },
         { status: 400 }
       );
     }
@@ -36,20 +29,12 @@ export async function POST(req) {
 
     await StripeConnection.updateOne(
       { userId: session.user.id },
-      {
-        $set: {
-          'settings.trialGuard.enabled':        enabled,
-          'settings.trialGuard.radarThreshold': radarThreshold,
-        },
-      }
+      { $set: { trialGuardMode } }
     );
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, trialGuardMode });
   } catch (error) {
-    console.error('[settings/trial-guard]', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    console.error('[PATCH /api/settings/trial-guard]', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

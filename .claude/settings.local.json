@@ -17,7 +17,10 @@
       "Bash(node --input-type=module --experimental-vm-modules)",
       "Bash(npx next:*)",
       "Bash(node -e \"const p = require\\('./package.json'\\); console.log\\(p.dependencies['lucide-react'] || 'NOT INSTALLED'\\)\")",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(node -e \"const p = require\\('./package.json'\\); console.log\\('type:', p.type\\); console.log\\('engines:', p.engines\\)\")",
+      "Bash(node -e \"try{require\\('dotenv'\\)}catch\\(e\\){console.log\\('no dotenv'\\)}\")",
+      "Bash(node:*)"
     ]
   }
 }

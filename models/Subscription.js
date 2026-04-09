@@ -34,6 +34,24 @@ const subscriptionSchema = new mongoose.Schema({
     enum: ['inferred', 'country_benchmark', 'default'],
     default: 'default',
   },
+  // Trial Guard
+  trialGuardEnabled: { type: Boolean, default: false },
+  trialGuardMode: {
+    type: String,
+    enum: ['universal', 'selective'],
+    default: 'universal',
+  },
+  riskSignals: { type: [String], default: [] },
+  paymentIntentId: { type: String, default: null },
+  paymentIntentStatus: {
+    type: String,
+    enum: ['pending', 'held', 'captured', 'cancelled', 'failed'],
+    default: null,
+  },
+  holdAmount: { type: Number, default: null },   // en cents
+  holdCurrency: { type: String, default: null },
+  holdCreatedAt: { type: Date, default: null },
+  holdExpiresAt: { type: Date, default: null },  // holdCreatedAt + 7 jours
 }, { timestamps: true });
 
 subscriptionSchema.index({ orgId: 1, stripeSubscriptionId: 1 });

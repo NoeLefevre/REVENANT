@@ -1,18 +1,14 @@
 import { NextResponse } from 'next/server';
 import connectMongo from '@/libs/mongoose';
-import TrialGuard from '@/models/TrialGuard';
+import Subscription from '@/models/Subscription';
 
 /**
  * GET /api/cron/trial-guard
- * Daily cron (06:00 UTC) — marks pre-auth holds as expired.
+ * Daily cron (06:00 UTC) — marks active holds as expired when holdExpiresAt has passed.
  *
  * Stripe pre-auth holds expire silently after 7 days.
  * This job syncs the DB to reflect that reality so the dashboard
- * never shows stale 'hold_active' records.
- *
- * Conditions to mark expired:
- *   - status is 'hold_active'
- *   - AND (trial has ended OR pre-auth was created > 7 days ago)
+ * never shows stale 'held' records.
  */
 export async function GET(request) {
   const authHeader = request.headers.get('authorization');
@@ -24,24 +20,20 @@ export async function GET(request) {
     await connectMongo();
 
     const now = new Date();
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-    const result = await TrialGuard.updateMany(
+    const result = await Subscription.updateMany(
       {
-        status: 'hold_active',
-        $or: [
-          { trialEnd: { $lt: now } },
-          { createdAt: { $lt: sevenDaysAgo } },
-        ],
+        paymentIntentStatus: 'held',
+        holdExpiresAt: { $lt: now },
       },
-      { status: 'expired' }
+      { paymentIntentStatus: 'cancelled' }
     );
 
-    console.log(`[cron/trial-guard] expired=${result.modifiedCount}`);
+    console.log(`[TRIAL-GUARD:CRON] expired holds marked cancelled: ${result.modifiedCount}`);
 
     return NextResponse.json({ expired: result.modifiedCount });
   } catch (error) {
-    console.error('[cron/trial-guard]', error);
+    console.error('[TRIAL-GUARD:CRON]', error);
     return NextResponse.json(
       { error: error.message || 'Internal server error' },
       { status: 500 }

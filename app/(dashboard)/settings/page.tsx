@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation';
 import connectMongo from '@/libs/mongoose';
 import StripeConnectionModel from '@/models/StripeConnection';
 import DisconnectStripeButton from '@/components/DisconnectStripeButton';
-import TrialGuardSettings from '@/components/revenant/TrialGuardSettings';
+import TrialGuardModeToggle from '@/components/revenant/TrialGuardModeToggle';
 
 interface PageProps {
   searchParams: Promise<{
@@ -37,6 +37,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
 
   const navItems = [
     { key: 'stripe', label: 'Stripe' },
+    { key: 'trial-guard', label: 'Trial Guard' },
     { key: 'emails', label: 'Emails' },
     { key: 'slack', label: 'Slack' },
     { key: 'billing', label: 'Billing' },
@@ -274,7 +275,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
           </div>
         )}
 
-        {section === 'emails' && (
+        {section === 'trial-guard' && (
           <div
             className="bg-white rounded-lg p-6 flex flex-col gap-5"
             style={{ boxShadow: '0 1px 3px #00000010', border: '1px solid #F0EDE8' }}
@@ -282,12 +283,11 @@ export default async function SettingsPage({ searchParams }: PageProps) {
             <div>
               <h2 className="text-[15px] font-semibold text-[#1A1A1A]">Trial Guard</h2>
               <p className="text-[12px] text-[#4B5563] mt-0.5">
-                Control how REVENANT handles high-risk trial signups.
+                Control how REVENANT verifies trial signups.
               </p>
             </div>
-            <TrialGuardSettings
-              initialEnabled={stripeConnection?.settings?.trialGuard?.enabled !== false}
-              initialThreshold={stripeConnection?.settings?.trialGuard?.radarThreshold ?? 65}
+            <TrialGuardModeToggle
+              initialMode={stripeConnection?.trialGuardMode ?? 'universal'}
             />
           </div>
         )}

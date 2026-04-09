@@ -6,15 +6,11 @@ import { computeRetryDate } from '@/libs/paydayRetry';
 import { computeRecoveryScore } from '@/libs/recoveryScore';
 import { computeHealthScore } from '@/libs/healthScore';
 import { computeMRR, getClientStripe } from '@/libs/stripeConnect';
-import { decrypt } from '@/libs/encryption';
-import { assessTrialRisk, createPreAuth, capturePreAuth, cancelPreAuth } from '@/libs/smartCharge';
-import { sendEmail } from '@/libs/resend';
+import { assessTrialRisk } from '@/libs/smartCharge';
 import StripeConnection from '@/models/StripeConnection';
 import Subscription from '@/models/Subscription';
 import Invoice from '@/models/Invoice';
 import DunningSequence from '@/models/DunningSequence';
-import TrialGuard from '@/models/TrialGuard';
-import User from '@/models/User';
 
 const SEQUENCE_DELAYS_DAYS = {
   SOFT_TEMPORARY: [0, 3, 7, 14, 21],
@@ -87,16 +83,22 @@ export async function POST(request) {
         const sub = event.data.object;
         const previousStatus = event.data.previous_attributes?.status;
         await handleSubscriptionUpsert(sub, orgId, stripeAccountId, stripe);
-        // SmartCharge: capture pre-auth when trial converts to active
+        // Trial Guard: capture hold when trial converts to active
         if (previousStatus === 'trialing' && sub.status === 'active') {
           await handleTrialGuardCapture(sub, orgId, stripeAccountId, connection);
+        }
+        // Trial Guard: cancel hold when trial is cancelled
+        if (previousStatus === 'trialing' && sub.status === 'canceled') {
+          await handleTrialGuardCancel(sub, orgId, stripeAccountId, connection, 'subscription_canceled');
         }
         await refreshHealthScore(orgId);
         break;
       }
 
       case 'customer.subscription.deleted': {
-        await handleSubscriptionDeleted(event.data.object, orgId, stripeAccountId, connection);
+        const sub = event.data.object;
+        await handleSubscriptionDeleted(sub, orgId, stripeAccountId, connection);
+        await handleTrialGuardCancel(sub, orgId, stripeAccountId, connection, 'subscription_deleted');
         await refreshHealthScore(orgId);
         break;
       }
@@ -169,12 +171,26 @@ export async function POST(request) {
 
       case 'payment_intent.succeeded': {
         const pi = event.data.object;
-        // payment_intent.succeeded fires for every successful charge, including new subscriptions.
-        // invoice.payment_succeeded handles the same outcome — this event is redundant for REVENANT.
-        // Log and skip to avoid double-processing.
-        console.log('[REVENANT:WEBHOOK] payment_intent.succeeded — no action needed', {
+        // Update Trial Guard hold status if this PI is tracked as a hold
+        await Subscription.findOneAndUpdate(
+          { paymentIntentId: pi.id, orgId },
+          { paymentIntentStatus: 'captured' }
+        );
+        console.log('[TRIAL-GUARD] payment_intent.succeeded — DB updated', {
           paymentIntentId: pi.id,
-          invoiceId: pi.invoice ?? null,
+        });
+        break;
+      }
+
+      case 'payment_intent.payment_failed': {
+        const pi = event.data.object;
+        await Subscription.findOneAndUpdate(
+          { paymentIntentId: pi.id, orgId },
+          { paymentIntentStatus: 'failed' }
+        );
+        console.log('[TRIAL-GUARD] payment_intent.payment_failed — DB updated', {
+          paymentIntentId: pi.id,
+          failureCode: pi.last_payment_error?.code ?? null,
         });
         break;
       }
@@ -310,229 +326,244 @@ async function handleSubscriptionDeleted(sub, orgId, stripeAccountId, connection
     await stopDunningSequence(inv._id, 'subscription_canceled');
   }
 
-  // SmartCharge: cancel pre-auth hold if trial was cancelled
-  const trialGuard = await TrialGuard.findOne({
-    stripeSubscriptionId: sub.id,
-    status: 'hold_active',
-  });
-
-  if (trialGuard?.paymentIntentId) {
-    const clientStripe = getClientStripe(connection.accessToken);
-    const cancelled = await cancelPreAuth(clientStripe, trialGuard.paymentIntentId, stripeAccountId);
-    await TrialGuard.findByIdAndUpdate(trialGuard._id, {
-      status: 'cancelled',
-      cancelledAt: new Date(),
-    });
-    console.log('[REVENANT:SMARTCHARGE] Pre-auth cancelled on subscription delete', {
-      stripeSubscriptionId: sub.id,
-      paymentIntentId: trialGuard.paymentIntentId,
-      cancelled,
-    });
-  }
-
   console.log('[REVENANT:WEBHOOK] Subscription deleted', {
     stripeSubscriptionId: sub.id,
     invoicesStopped: invoices.length,
   });
 }
 
-// ── SmartCharge handlers ──────────────────────────────────────────────────────
+// ── Trial Guard handlers ──────────────────────────────────────────────────────
 
 async function handleTrialGuard(sub, orgId, stripeAccountId, connection) {
-  // Read per-account settings (with safe defaults)
-  const tgSettings = connection.settings?.trialGuard ?? {};
-  const trialGuardEnabled  = tgSettings.enabled !== false; // default: true
-  const radarThreshold     = typeof tgSettings.radarThreshold === 'number' ? tgSettings.radarThreshold : 65;
+  // 1. Trial Guard must be active for this account
+  if (!connection.trialGuardActive) {
+    console.log('[TRIAL-GUARD] Inactive for this account — skipping', { subscriptionId: sub.id });
+    return;
+  }
 
-  const pmId       = sub.default_payment_method;
-  const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer?.id;
+  // 2. Constraint: only support trials ≤ 7 days (Stripe hold max duration)
+  if (!sub.trial_end) {
+    console.log('[TRIAL-GUARD] No trial_end — skipping', { subscriptionId: sub.id });
+    return;
+  }
+
+  const trialDurationDays = (sub.trial_end - Math.floor(Date.now() / 1000)) / 86400;
+  if (trialDurationDays > 7) {
+    console.log('[TRIAL-GUARD] Trial > 7 days — skipping', {
+      subscriptionId: sub.id,
+      trialDurationDays: Math.round(trialDurationDays),
+    });
+    return;
+  }
+
+  // 3. No payment method attached — cannot place a hold
+  const pmId = sub.default_payment_method;
+  if (!pmId) {
+    console.log('[TRIAL-GUARD] No payment method — skipping', { subscriptionId: sub.id });
+    return;
+  }
+
+  const trialGuardMode = connection.trialGuardMode ?? 'universal';
   const clientStripe = getClientStripe(connection.accessToken);
 
-  // Retrieve customer readable data
-  let customerEmail = null;
-  let customerName  = null;
-  try {
-    const customer = await clientStripe.customers.retrieve(customerId);
-    customerEmail = customer.email ?? null;
-    customerName  = customer.name ?? null;
-  } catch (err) {
-    console.error('[REVENANT:SMARTCHARGE] Failed to retrieve customer', { customerId, error: err.message });
-  }
-
-  const baseFields = {
-    orgId, stripeAccountId,
-    stripeCustomerId:      customerId,
-    stripeSubscriptionId:  sub.id,
-    customerEmail,
-    customerName,
-    trialEnd: sub.trial_end ? new Date(sub.trial_end * 1000) : null,
-  };
-
-  // Trial Guard disabled by the founder — monitor only, no pre-auth
-  if (!trialGuardEnabled) {
-    await TrialGuard.create({ ...baseFields, paymentIntentId: null, riskSignals: [], isHighRisk: false, status: 'monitoring' });
-    console.log('[REVENANT:SMARTCHARGE] Trial Guard disabled — monitoring only', { stripeSubscriptionId: sub.id });
-    return;
-  }
-
-  // No payment method attached — monitor only
-  if (!pmId) {
-    await TrialGuard.create({ ...baseFields, paymentIntentId: null, riskSignals: [], isHighRisk: false, status: 'monitoring' });
-    console.log('[REVENANT:SMARTCHARGE] No payment method — monitoring only', { stripeSubscriptionId: sub.id });
-    return;
-  }
-
-  // Retrieve payment method from the connected account
+  // 4. Retrieve payment method and scan risk signals
   let pm;
   try {
     pm = await clientStripe.paymentMethods.retrieve(pmId);
   } catch (err) {
-    console.error('[REVENANT:SMARTCHARGE] Failed to retrieve payment method', { pmId, stripeAccountId, error: err.message });
+    console.error('[TRIAL-GUARD] Failed to retrieve payment method', { pmId, error: err.message });
     return;
   }
 
-  const cardData = {
-    cardLast4:    pm.card?.last4    ?? null,
-    cardBrand:    pm.card?.brand    ?? null,
-    cardExpMonth: pm.card?.exp_month ?? null,
-    cardExpYear:  pm.card?.exp_year  ?? null,
-    cardFunding:  pm.card?.funding  ?? null,
-  };
+  const radarThreshold = connection.settings?.trialGuard?.radarThreshold ?? 65;
+  const { risks } = assessTrialRisk(pm, sub, radarThreshold);
 
-  const { isHighRisk, risks } = assessTrialRisk(pm, sub, radarThreshold);
+  // 5. Decision: place hold or monitor only
+  const shouldPlaceHold = trialGuardMode === 'universal' || risks.length > 0;
 
-  // ── 7-day pre-auth window constraint ──────────────────────────────────────
-  // Stripe pre-auth holds expire after 7 days. If the trial lasts longer,
-  // the hold would expire before the subscription converts — useless.
-  const SEVEN_DAYS_MS    = 7 * 24 * 60 * 60 * 1000;
-  const trialRemainingMs = sub.trial_end ? (sub.trial_end * 1000 - Date.now()) : 0;
-  const trialTooLong     = trialRemainingMs > SEVEN_DAYS_MS;
-
-  console.log('[REVENANT:SMARTCHARGE] Risk assessment', {
-    stripeSubscriptionId: sub.id, customerId, isHighRisk, risks,
-    radarThreshold, trialTooLong,
-    trialRemainingDays: Math.ceil(trialRemainingMs / 86400000),
-  });
-
-  if (!isHighRisk || trialTooLong) {
-    await TrialGuard.create({
-      ...baseFields, ...cardData,
-      paymentIntentId: null,
-      riskSignals: risks,
-      // Mark isHighRisk correctly even if we can't pre-auth (for dashboard visibility)
-      isHighRisk: isHighRisk && !trialTooLong,
-      status: 'monitoring',
-    });
-    if (trialTooLong && isHighRisk) {
-      console.log('[REVENANT:SMARTCHARGE] High-risk but trial > 7 days — pre-auth skipped, monitoring only', {
-        stripeSubscriptionId: sub.id, risks,
-        trialRemainingDays: Math.ceil(trialRemainingMs / 86400000),
-      });
-    }
-    return;
-  }
-
-  // ── High-risk + within 7-day window → attempt pre-auth ───────────────────
-  const paymentIntent = await createPreAuth(clientStripe, {
-    customerId, paymentMethodId: pmId, stripeAccountId, amount: 100,
-  });
-
-  const status = paymentIntent ? 'hold_active' : 'failed';
-
-  await TrialGuard.create({
-    ...baseFields, ...cardData,
-    paymentIntentId: paymentIntent?.id ?? null,
-    riskSignals: risks,
-    isHighRisk: true,
-    status,
-    preAuthAmount: 100,
-    ...(status === 'failed' ? { failedAt: new Date() } : {}),
-  });
-
-  console.log('[REVENANT:SMARTCHARGE] Pre-auth', {
-    stripeSubscriptionId: sub.id, customerId, status,
-    paymentIntentId: paymentIntent?.id ?? null, risks,
-  });
-
-  // ── Notify founder when pre-auth hold is placed ───────────────────────────
-  if (status === 'hold_active') {
-    try {
-      const founder = await User.findById(orgId).select('email').lean();
-      if (founder?.email) {
-        const signalLabels = {
-          prepaid_card:                  'Prepaid card',
-          card_expires_before_trial_end: 'Card expires before trial end',
-          high_radar_score:              'High Radar risk score',
-        };
-        const signalsList    = risks.map((r) => `• ${signalLabels[r] ?? r}`).join('\n');
-        const customerLabel  = customerName || customerEmail || customerId;
-        const cardLabel      = cardData.cardBrand
-          ? `${cardData.cardBrand.charAt(0).toUpperCase() + cardData.cardBrand.slice(1)} ···${cardData.cardLast4}`
-          : 'Unknown card';
-
-        await sendEmail({
-          to: founder.email,
-          subject: `[REVENANT] High-risk trial detected — ${customerLabel}`,
-          html: `<p>A high-risk trial signup was detected and a <strong>$1.00 pre-authorization hold</strong> has been placed on the card.</p>
-<p>
-  <strong>Customer:</strong> ${customerLabel}${customerEmail && customerName ? ` (${customerEmail})` : ''}<br/>
-  <strong>Card:</strong> ${cardLabel}${cardData.cardFunding === 'prepaid' ? ' — <em>Prepaid</em>' : ''}<br/>
-  <strong>Trial ends:</strong> ${sub.trial_end ? new Date(sub.trial_end * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Unknown'}
-</p>
-<p><strong>Risk signals:</strong></p>
-<pre style="background:#FEF2F2;padding:10px;border-radius:4px">${signalsList}</pre>
-<p>REVENANT will automatically capture the hold when the trial converts to an active subscription, and release it if the trial is cancelled.</p>`,
-          text: `High-risk trial detected: ${customerLabel}\nCard: ${cardLabel}\n\nRisk signals:\n${signalsList}\n\nREVENANT has placed a $1.00 pre-auth hold. It will be captured on trial conversion.`,
-        });
+  if (!shouldPlaceHold) {
+    await Subscription.findOneAndUpdate(
+      { stripeSubscriptionId: sub.id, orgId },
+      {
+        trialGuardEnabled: true,
+        trialGuardMode: 'selective',
+        riskSignals: [],
+        paymentIntentStatus: null,
       }
-    } catch (err) {
-      console.error('[REVENANT:SMARTCHARGE] Founder notification failed', { error: err.message });
+    );
+    console.log('[TRIAL-GUARD] Selective mode — no risk signal — monitoring only', {
+      subscriptionId: sub.id,
+    });
+    return;
+  }
+
+  // 6. Get exact plan amount (brief section 4: use subscriptionAmount, not $1)
+  const holdAmount = sub.items?.data?.[0]?.price?.unit_amount ?? 100;
+  const holdCurrency = sub.items?.data?.[0]?.price?.currency ?? 'usd';
+  const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer?.id;
+
+  // 7. Create PaymentIntent with idempotency key
+  let paymentIntent;
+  try {
+    paymentIntent = await clientStripe.paymentIntents.create(
+      {
+        amount: holdAmount,
+        currency: holdCurrency,
+        customer: customerId,
+        payment_method: pmId,
+        capture_method: 'manual',
+        confirm: true,
+        return_url: `${process.env.NEXT_PUBLIC_APP_URL}/api/trial-guard/confirm`,
+      },
+      {
+        idempotencyKey: `trial-guard-${sub.id}`,
+        stripeAccount: stripeAccountId,
+      }
+    );
+  } catch (err) {
+    console.error('[TRIAL-GUARD] PaymentIntent creation failed — cancelling subscription', {
+      subscriptionId: sub.id,
+      error: err.message,
+    });
+    await Subscription.findOneAndUpdate(
+      { stripeSubscriptionId: sub.id, orgId },
+      {
+        trialGuardEnabled: true,
+        trialGuardMode,
+        riskSignals: risks,
+        paymentIntentStatus: 'failed',
+      }
+    );
+    // Block the trial: cancel the subscription (brief section 6)
+    try {
+      await clientStripe.subscriptions.cancel(sub.id);
+      console.log('[TRIAL-GUARD] Subscription cancelled after hold failure', { subscriptionId: sub.id });
+    } catch (cancelErr) {
+      console.error('[TRIAL-GUARD] Failed to cancel subscription', { subscriptionId: sub.id, error: cancelErr.message });
+    }
+    return;
+  }
+
+  // 8. Handle PaymentIntent status
+  let finalStatus;
+  if (paymentIntent.status === 'requires_action') {
+    // 3DS required — store as pending, confirm route handles the callback
+    finalStatus = 'pending';
+    console.log('[TRIAL-GUARD] 3DS required — hold pending', {
+      subscriptionId: sub.id,
+      paymentIntentId: paymentIntent.id,
+      redirectUrl: paymentIntent.next_action?.redirect_to_url?.url,
+    });
+  } else if (paymentIntent.status === 'requires_capture') {
+    finalStatus = 'held';
+  } else {
+    // Unexpected status — treat as failure, cancel subscription
+    finalStatus = 'failed';
+    console.error('[TRIAL-GUARD] Unexpected PaymentIntent status — cancelling subscription', {
+      subscriptionId: sub.id,
+      status: paymentIntent.status,
+    });
+    try {
+      await clientStripe.subscriptions.cancel(sub.id);
+    } catch (cancelErr) {
+      console.error('[TRIAL-GUARD] Failed to cancel subscription', { subscriptionId: sub.id, error: cancelErr.message });
     }
   }
 
-  // ── Pre-auth failed → notify customer to update their card ────────────────
-  // The hold was rejected (3DS required or card declined). Ask the customer
-  // to update their payment method so the trial can convert smoothly.
-  if (status === 'failed' && customerEmail) {
-    try {
-      const name = customerName || 'there';
-      await sendEmail({
-        to: customerEmail,
-        subject: 'Action required: please update your payment method',
-        html: `<p>Hi ${name},</p>
-<p>We were unable to verify the payment method linked to your trial subscription.</p>
-<p>Please update your card to ensure uninterrupted access when your trial period ends.</p>
-<p>Thanks,<br/>The team</p>`,
-        text: `Hi ${name},\n\nWe were unable to verify the payment method linked to your trial subscription. Please update your card to ensure uninterrupted access when your trial period ends.\n\nThanks,\nThe team`,
-      });
-      console.log('[REVENANT:SMARTCHARGE] Customer notified of payment method issue', { customerEmail });
-    } catch (err) {
-      console.error('[REVENANT:SMARTCHARGE] Customer notification failed', { error: err.message });
-    }
-  }
+  // 9. Persist to Subscription
+  const holdCreatedAt = new Date();
+  await Subscription.findOneAndUpdate(
+    { stripeSubscriptionId: sub.id, orgId },
+    {
+      trialGuardEnabled: true,
+      trialGuardMode,
+      riskSignals: risks,
+      paymentIntentId: paymentIntent.id,
+      paymentIntentStatus: finalStatus,
+      holdAmount,
+      holdCurrency,
+      holdCreatedAt,
+      holdExpiresAt: new Date(holdCreatedAt.getTime() + 7 * 86400000),
+    },
+    { upsert: true }
+  );
+
+  console.log('[TRIAL-GUARD] Hold placed', {
+    subscriptionId: sub.id,
+    paymentIntentId: paymentIntent.id,
+    status: finalStatus,
+    amount: holdAmount,
+    currency: holdCurrency,
+    riskSignals: risks,
+    mode: trialGuardMode,
+  });
 }
 
 async function handleTrialGuardCapture(sub, orgId, stripeAccountId, connection) {
-  const trialGuard = await TrialGuard.findOne({
+  const subscription = await Subscription.findOne({
     stripeSubscriptionId: sub.id,
-    status: 'hold_active',
+    orgId,
+    paymentIntentStatus: 'held',
   });
 
-  if (!trialGuard?.paymentIntentId) return;
+  if (!subscription?.paymentIntentId) return;
 
   const clientStripe = getClientStripe(connection.accessToken);
-  const success = await capturePreAuth(clientStripe, trialGuard.paymentIntentId, stripeAccountId);
+  try {
+    await clientStripe.paymentIntents.capture(
+      subscription.paymentIntentId,
+      {},
+      { stripeAccount: stripeAccountId }
+    );
+    await Subscription.findOneAndUpdate(
+      { stripeSubscriptionId: sub.id, orgId },
+      { paymentIntentStatus: 'captured' }
+    );
+    console.log('[TRIAL-GUARD] Hold captured', {
+      subscriptionId: sub.id,
+      paymentIntentId: subscription.paymentIntentId,
+    });
+  } catch (err) {
+    console.error('[TRIAL-GUARD] Capture failed', {
+      subscriptionId: sub.id,
+      paymentIntentId: subscription.paymentIntentId,
+      error: err.message,
+    });
+  }
+}
 
-  await TrialGuard.findByIdAndUpdate(trialGuard._id, {
-    status: success ? 'captured' : 'failed',
-    ...(success ? { capturedAt: new Date() } : { failedAt: new Date() }),
-  });
-
-  console.log('[REVENANT:SMARTCHARGE] Pre-auth captured', {
+async function handleTrialGuardCancel(sub, orgId, stripeAccountId, connection, reason) {
+  const subscription = await Subscription.findOne({
     stripeSubscriptionId: sub.id,
-    paymentIntentId: trialGuard.paymentIntentId,
-    success,
+    orgId,
+    paymentIntentStatus: 'held',
   });
+
+  if (!subscription?.paymentIntentId) return;
+
+  const clientStripe = getClientStripe(connection.accessToken);
+  try {
+    await clientStripe.paymentIntents.cancel(
+      subscription.paymentIntentId,
+      {},
+      { stripeAccount: stripeAccountId }
+    );
+    await Subscription.findOneAndUpdate(
+      { stripeSubscriptionId: sub.id, orgId },
+      { paymentIntentStatus: 'cancelled' }
+    );
+    console.log('[TRIAL-GUARD] Hold cancelled', {
+      subscriptionId: sub.id,
+      paymentIntentId: subscription.paymentIntentId,
+      reason,
+    });
+  } catch (err) {
+    console.error('[TRIAL-GUARD] Cancel failed', {
+      subscriptionId: sub.id,
+      paymentIntentId: subscription.paymentIntentId,
+      error: err.message,
+    });
+  }
 }
 
 async function handleInvoicePaymentFailed(inv, orgId, stripeAccountId) {

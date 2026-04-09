@@ -92,39 +92,21 @@ function SettingsIcon({ color }: { color: string }) {
 
 const navItems: NavItem[] = [
   {
+    href: '/trial-guard',
+    label: 'Trial Guard',
+    icon: null,
+  },
+  {
     href: '/overview',
     label: 'Overview',
-    icon: null, // will be rendered with color
-  },
-  {
-    href: '/invoices',
-    label: 'Invoices',
-    icon: null,
-  },
-  {
-    href: '/customers',
-    label: 'Customers',
-    icon: null,
-  },
-  {
-    href: '/prevention',
-    label: 'Prevention',
-    icon: null,
-  },
-  {
-    href: '/sequences',
-    label: 'Sequences',
     icon: null,
   },
 ];
 
 function NavIcon({ href, active }: { href: string; active: boolean }) {
   const color = active ? '#6C63FF' : '#4B5563';
+  if (href === '/trial-guard') return <ShieldCheckIcon color={color} />;
   if (href === '/overview') return <LayoutDashboardIcon color={color} />;
-  if (href === '/invoices') return <FileXIcon color={color} />;
-  if (href === '/customers') return <UsersIcon color={color} />;
-  if (href === '/prevention') return <ShieldCheckIcon color={color} />;
-  if (href === '/sequences') return <MailIcon color={color} />;
   if (href === '/settings') return <SettingsIcon color={color} />;
   return null;
 }

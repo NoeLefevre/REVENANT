@@ -32,6 +32,13 @@ const stripeConnectionSchema = new mongoose.Schema({
   },
   // Onboarding nurture email tracking (steps 0-3 = emails 1-4)
   onboardingEmailsSent: { type: [Number], default: [] },
+  // Trial Guard — mode and activation (top-level for quick access in webhook)
+  trialGuardMode: {
+    type: String,
+    enum: ['universal', 'selective'],
+    default: 'universal',
+  },
+  trialGuardActive: { type: Boolean, default: true },
   // Feature settings — all have opinionated defaults, nothing is required to configure
   settings: {
     trialGuard: {
