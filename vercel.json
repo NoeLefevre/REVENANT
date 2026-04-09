@@ -1,9 +1,5 @@
 {
   "crons": [
-    { "path": "/api/cron/retry",      "schedule": "0 * * * *"  },
-    { "path": "/api/cron/dunning",    "schedule": "0 * * * *"  },
-    { "path": "/api/cron/prevention", "schedule": "0 8 * * *"  },
-    { "path": "/api/cron/onboarding",    "schedule": "0 9 * * *"  },
-    { "path": "/api/cron/trial-guard",   "schedule": "0 6 * * *"  }
+    { "path": "/api/cron/trial-guard", "schedule": "0 6 * * *" }
   ]
 }
