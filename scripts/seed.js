@@ -50,31 +50,51 @@ async function createTrialCustomer({ email, name, pmInput, trialDays, priceId })
   try {
     let pm
     if (typeof pmInput === 'string') {
-      pm = await stripe.paymentMethods.attach(pmInput, { customer: out.customer.id }, opts)
+      try {
+        pm = await stripe.paymentMethods.attach(pmInput, { customer: out.customer.id }, opts)
+      } catch (err) {
+        console.error(`   ❌ paymentMethods.attach échoué: ${err.decline_code || err.code || err.message}`)
+        return out
+      }
     } else {
       // Carte brute (ex: expiry personnalisée pour tester card_expires_before_trial_end)
-      pm = await stripe.paymentMethods.create(pmInput, opts)
-      await stripe.paymentMethods.attach(pm.id, { customer: out.customer.id }, opts)
+      try {
+        pm = await stripe.paymentMethods.create(pmInput, opts)
+        await stripe.paymentMethods.attach(pm.id, { customer: out.customer.id }, opts)
+      } catch (err) {
+        console.error(`   ❌ paymentMethods.create/attach (carte brute) échoué: ${err.decline_code || err.code || err.message}`)
+        return out
+      }
     }
 
-    await stripe.customers.update(
-      out.customer.id,
-      { invoice_settings: { default_payment_method: pm.id } },
-      opts
-    )
-    const sub = await stripe.subscriptions.create(
-      {
-        customer: out.customer.id,
-        items: [{ price: priceId }],
-        default_payment_method: pm.id,
-        trial_end: Math.floor(Date.now() / 1000) + trialDays * 86400,
-      },
-      opts
-    )
-    out.sub = sub
-    stats.trialsStarted++
+    try {
+      await stripe.customers.update(
+        out.customer.id,
+        { invoice_settings: { default_payment_method: pm.id } },
+        opts
+      )
+    } catch (err) {
+      console.error(`   ❌ customers.update (default_payment_method) échoué: ${err.decline_code || err.code || err.message}`)
+      return out
+    }
+
+    try {
+      const sub = await stripe.subscriptions.create(
+        {
+          customer: out.customer.id,
+          items: [{ price: priceId }],
+          default_payment_method: pm.id,
+          trial_end: Math.floor(Date.now() / 1000) + trialDays * 86400,
+        },
+        opts
+      )
+      out.sub = sub
+      stats.trialsStarted++
+    } catch (err) {
+      console.error(`   ❌ subscriptions.create échoué: ${err.decline_code || err.code || err.message}`)
+    }
   } catch (err) {
-    console.error(`   ❌ ${err.decline_code || err.code || err.message}`)
+    console.error(`   ❌ Erreur inattendue: ${err.message}`)
   }
 
   return out
@@ -139,46 +159,58 @@ async function runScenario1(price) {
   })
 }
 
-// Scénario 2 — Trial bloqué (fonds insuffisants)
-// Le trial démarre, puis le webhook tente le hold → insufficient_funds → subscription annulée
+// Scénario 2 — Trial bloqué (carte refusée — generic decline)
+// pm_card_chargeDeclinedInsufficientFunds échoue à l'attach sur compte connecté.
+// On utilise pm_card_chargeDeclined (generic decline) : s'attache, trial créé, hold échoue.
 async function runScenario2(price) {
   const ts = Date.now()
-  const email = `s2-nsf-${ts}@trial-test.com`
-  const pmToken = 'pm_card_chargeDeclinedInsufficientFunds'
+  const email = `s2-declined-${ts}@trial-test.com`
+  const pmToken = 'pm_card_chargeDeclined'
   const trialDays = 7
 
   const { customer, sub } = await createTrialCustomer({
-    email, name: 'S2 NSF Card', pmInput: pmToken, trialDays, priceId: price.id,
+    email, name: 'S2 Declined Card', pmInput: pmToken, trialDays, priceId: price.id,
   })
 
   if (customer) stats.holdsExpectedFail++
 
   logScenario({
-    id: '2', name: 'Trial bloqué (fonds insuffisants)',
+    id: '2', name: 'Trial bloqué (carte refusée — generic decline)',
     email, customerId: customer?.id, subId: sub?.id ?? '(annulée par Trial Guard via webhook)',
     pmToken, trialDays,
-    expectedOutcome: 'Hold échoue (insufficient_funds) → subscription annulée → paymentIntentStatus: "failed"',
+    expectedOutcome: 'Hold échoue (do_not_honor) → subscription annulée → paymentIntentStatus: "failed"',
   })
 }
 
-// Scénario 3 — Trial bloqué (carte expirée)
+// Scénario 3 — Trial bloqué (carte expirée — carte brute)
+// pm_card_chargeDeclinedExpiredCard est rejeté par Stripe à l'attach (carte littéralement expirée).
+// On utilise une carte brute avec expiry passée : attach OK, trial créé,
+// mais hold échoue car la carte est expirée au moment du PaymentIntent.
 async function runScenario3(price) {
   const ts = Date.now()
   const email = `s3-expired-${ts}@trial-test.com`
-  const pmToken = 'pm_card_chargeDeclinedExpiredCard'
   const trialDays = 7
 
+  // Carte expirée il y a 2 mois
+  const now = new Date()
+  const expMonth = now.getMonth() <= 1
+    ? 12 + now.getMonth() - 1  // handle janvier/février
+    : now.getMonth() - 1       // mois précédent (1-indexé, getMonth() est 0-indexé donc -1 = 2 mois avant)
+  const expYear = now.getMonth() <= 1 ? now.getFullYear() - 1 : now.getFullYear()
+  const pmInput = { type: 'card', card: { number: '4242424242424242', exp_month: expMonth, exp_year: expYear, cvc: '314' } }
+  const pmLabel = `raw_card exp=${String(expMonth).padStart(2, '0')}/${expYear} (expirée)`
+
   const { customer, sub } = await createTrialCustomer({
-    email, name: 'S3 Expired Card', pmInput: pmToken, trialDays, priceId: price.id,
+    email, name: 'S3 Expired Card', pmInput, trialDays, priceId: price.id,
   })
 
   if (customer) stats.holdsExpectedFail++
 
   logScenario({
-    id: '3', name: 'Trial bloqué (carte expirée)',
+    id: '3', name: 'Trial bloqué (carte expirée — carte brute)',
     email, customerId: customer?.id, subId: sub?.id ?? '(annulée par Trial Guard via webhook)',
-    pmToken, trialDays,
-    expectedOutcome: 'Hold échoue (expired_card) → subscription annulée → paymentIntentStatus: "failed"',
+    pmToken: pmLabel, trialDays,
+    expectedOutcome: 'Hold échoue (expired_card via carte brute) → subscription annulée → paymentIntentStatus: "failed"',
   })
 }
 
